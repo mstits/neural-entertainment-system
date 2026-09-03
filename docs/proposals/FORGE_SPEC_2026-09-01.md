@@ -319,6 +319,19 @@ cells[t-1]`, or the child's root-state hash differs from `root_state_sha`, or `r
 (`src/utils/run_lock.py:93`) reports a holder pid other than the child's, or `solutions`
 decreases. Any one trips the watchdog: SIGTERM the child, `release()` the lock (`:150`), bank nothing.
 
+**Addendum, 2026-09-02 (FORGE-FIX-4), extending the wrongful-reset definition above.**
+The definition as written compares values, so it says nothing about a watchdog input that
+stops being readable at all. `_sha_of_file` and `run_lock.read_lock` both return `None` on
+an unreadable file, and both comparisons were gated on non-`None`, so deleting or chmod-ing
+the root state mid-block, or truncating the child's `.run.lock`, switched its condition OFF
+for the rest of the block and the run reached `_bank_solutions`. Two conditions are added,
+in the same fixed order: a root state that HAS been read and then will not read is
+`root_state_lost` (the runner writes the sandbox copy itself before launch, so it always
+has), and a `.run.lock` that is present on disk and does not parse is `lock_unreadable`. A
+lock that is simply GONE is deliberately not a trip: a child unlinks its own lock as it
+exits, before the process dies, so "missing" cannot be told from a clean stop without
+racing that teardown. `abort_reason` therefore takes two more values.
+
 **Block receipt** (fields fixed by the ruling; LG rule 9):
 ```json
 {"wall_id": "…", "cycle_id": "…", "grant_entry": "CLAIMS.md#FORGE-GRANT-cv_hall-2026-09-01",

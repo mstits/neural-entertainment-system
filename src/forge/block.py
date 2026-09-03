@@ -33,7 +33,18 @@ after ``term_grace_s``), releases the child's own ``.run.lock`` (the
 child's atexit unlink never fires under SIGKILL, so the runner does it),
 and returns with ``banked: []``: banking only happens after a clean stop
 with ``watchdog_trips: 0``, so an aborted block has nothing to bank by
-construction. The root-state hash (condition 3) is re-read from disk on
+construction. That last sentence is about ONE receipt, and ``<--out>`` is
+reused across blocks (``mkdir(exist_ok=True)``; ``loop._out_dir_for``
+keys the directory on ``cycle_id``, so a retried cycle is the same
+path), so the abort also MOVES ``<--out>/solutions/`` to
+``<--out>/quarantine/solutions-<started>/`` and records the destination
+in ``quarantined_solutions``: otherwise the next block on that directory
+banks the aborted block's artifacts under its own ``watchdog_trips: 0``,
+and the grant-ending condition (one wrongful reset that banks an
+artifact) is unreachable because no single receipt carries both halves.
+Banking is independently floored at the block's own launch: a marker
+file written before launch supplies the mtime below which an artifact
+was not produced by this block, so leftovers survive neither guard. The root-state hash (condition 3) is re-read from disk on
 EVERY poll, never cached from before launch -- a wrongful reset that
 swaps the root file mid-block, not only a plan whose ``root_state_sha``
 was wrong to begin with, must be reachable.
@@ -104,6 +115,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import signal
 import time
@@ -129,6 +141,15 @@ POLL_INTERVAL_S = 0.5
 TERM_GRACE_S = 10.0
 KILL_GRACE_S = 10.0
 _KILL_POLL_S = 0.02
+
+#: Every FORGE-GRANT entry in CLAIMS.md fixes these two numbers as the
+#: block's bounds ("Block bounds: max_secs 1200 and max_steps 2000000
+#: per block"). They were also the code's ONLY defaults -- a plan that
+#: asked for more than the grant allowed got more, silently, because
+#: nothing compared the plan's value against the grant's. These are the
+#: ceiling now, enforced below regardless of what the plan requests.
+GRANT_MAX_SECS = 1200.0
+GRANT_MAX_STEPS = 2_000_000
 
 _STOP_VALUES = ("budget", "stalled", "abort", "complete")
 
@@ -360,6 +381,8 @@ def wrongful_reset(
     current_root_sha: Optional[str] = None,
     lock_holder_pid: Optional[int] = None,
     child_pid: Optional[int] = None,
+    root_state_seen: bool = False,
+    lock_unreadable: bool = False,
 ) -> dict:
     """``{"reason": <str>}`` naming the first tripped condition (checked
     in the module docstring's fixed order), else ``{"reason": None}``.
@@ -368,6 +391,25 @@ def wrongful_reset(
     present and numeric/comparable -- a missing or malformed field reads
     as "nothing to compare", never as a trip, so a torn read or an
     absent lock file cannot itself manufacture a wrongful-reset verdict.
+
+    Two exceptions, and they are the point of FORGE-FIX-4: a watchdog
+    that reads its own blindness as "no evidence of a reset" is the one
+    shape of failure a wrongful-reset watchdog may not have.
+    ``_sha_of_file`` and ``run_lock.read_lock`` both return ``None`` on
+    a file they cannot read, so deleting or chmod-ing the root state
+    mid-block, or truncating the child's ``.run.lock``, switched that
+    condition OFF for the rest of the block.
+
+    ``root_state_seen`` is the caller's statement that this file HAS
+    been read (``run_block`` writes the sandbox copy itself before
+    launch, so it knows): a ``None`` reading under it is a loss, not an
+    absence, and trips ``root_state_lost``. ``lock_unreadable`` is the
+    caller's statement that the lock FILE is present and did not parse,
+    which trips ``lock_unreadable``. A lock that is simply GONE is
+    deliberately not a trip on either flag: a child releases its own
+    lock as it exits, so "missing" cannot be told apart from a clean
+    stop without racing that exit. Both default False, so a caller that
+    has read neither file keeps the old "nothing to compare" reading.
     """
     if prev_row is not None and cur_row is not None:
         pc, cc = prev_row.get("cells"), cur_row.get("cells")
@@ -378,9 +420,13 @@ def wrongful_reset(
         if isinstance(ps, (int, float)) and isinstance(cs, (int, float)) \
                 and cs < ps:
             return {"reason": "solutions_decreased"}
+    if root_state_seen and current_root_sha is None:
+        return {"reason": "root_state_lost"}
     if root_state_sha is not None and current_root_sha is not None \
             and current_root_sha != root_state_sha:
         return {"reason": "root_state_mismatch"}
+    if lock_unreadable:
+        return {"reason": "lock_unreadable"}
     if lock_holder_pid is not None and child_pid is not None \
             and lock_holder_pid != child_pid:
         return {"reason": "lock_holder_mismatch"}
@@ -430,15 +476,48 @@ def positive_control_caught(
     return root_sha_at_trip == injected_sha
 
 
-def _grant_anchor_present(grant_entry: Optional[str], claims_path: Path) -> bool:
+def _grant_anchor_present(grant_entry: Optional[str], claims_path: Path,
+                          wall_id: Optional[str] = None) -> bool:
+    """True only when ``grant_entry``'s fragment names this wall and is a
+    real Markdown HEADING in ``claims_path`` reading exactly that
+    fragment. Two clauses beyond the old bare ``anchor in text``
+    substring test, one per hole that test left open:
+
+      1. **Foreign, truncated or empty fragment.** ``FORGE-GRANT-cv`` is
+         a substring of ``FORGE-GRANT-cv_hall-2026-09-01``, so a plan on
+         ``contra_wall`` naming the ``cv_hall`` anchor read as granted.
+         The grants are per wall (CLAIMS.md:1001, :1064), so the
+         fragment has to carry the plan's own ``wall_id``. The same
+         clause closes the empty fragment: ``"#"`` and ``"CLAIMS.md#"``
+         both split to ``""``, which is a substring of every file, so a
+         CLAIMS.md holding no grant at all admitted the block -- and no
+         non-empty ``wall_id`` is a substring of ``""``. A separate
+         ``if not anchor`` guard would have no case left of its own, so
+         there is not one.
+      2. **A body citation instead of a heading.** Every landed grant
+         quotes its own ``grant_entry`` string inside its prose
+         (CLAIMS.md:1001-1002, :1064-1065), so deleting the heading to
+         withdraw a grant left the quoted copy behind and a substring
+         test kept passing on it. The anchor has to be a heading, which
+         is what a ``CLAIMS.md#...`` fragment means and the only line
+         that withdrawing the entry actually removes.
+
+    The heading form accepted is CommonMark ATX with up to three leading
+    spaces and no closing hash run, which is what both landed grants use
+    (``#### FORGE-GRANT-cv_hall-2026-09-01``).
+    """
     if not grant_entry:
         return False
     anchor = grant_entry.split("#", 1)[-1] if "#" in grant_entry else grant_entry
+    if not wall_id or wall_id not in anchor:
+        return False
     try:
         text = Path(claims_path).read_text()
     except OSError:
         return False
-    return anchor in text
+    heading = re.compile(r"^ {0,3}#{1,6}[ \t]+" + re.escape(anchor) + r"[ \t]*$",
+                         re.MULTILINE)
+    return heading.search(text) is not None
 
 
 def _grant_ended(grant_state_path: Path) -> bool:
@@ -493,12 +572,82 @@ def _attended_hours(attended_log: Path) -> float:
     return round(total, 4)
 
 
-def _bank_solutions(child_out: Path, repo: Path) -> list:
-    """Copies every file under ``<child_out>/solutions/`` into
-    ``<child_out>/sandbox/`` and returns the copies' repo-relative
-    paths. Called only after a clean stop with `watchdog_trips == 0` --
-    never on the abort path, so `banked` is `[]` by construction
-    whenever a wrongful reset was caught."""
+BANK_FLOOR_NAME = ".block_start"
+QUARANTINE_DIR_NAME = "quarantine"
+
+
+def _make_bank_floor(child_out: Path) -> Optional[float]:
+    """Writes ``<child_out>/.block_start`` and returns its own mtime, the
+    only timestamp ``_bank_solutions`` is allowed to compare against.
+
+    Taken from the FILESYSTEM's clock, by writing a file and reading the
+    mtime back, never from ``time.time()`` or the injectable
+    ``wall_clock_fn``: the values it is compared against are ``st_mtime``
+    of the child's own artifacts, and on a filesystem that truncates
+    mtime to whole seconds a wall-clock floor read half a second into
+    that second excludes artifacts the child wrote AFTER launch. A
+    marker written through the same filesystem is truncated the same
+    way, so the comparison stays on one clock at one resolution.
+
+    Returns None only if the marker cannot be written; the caller
+    refuses the block rather than banking with no floor."""
+    marker = Path(child_out) / BANK_FLOOR_NAME
+    try:
+        marker.write_bytes(b"")
+        return marker.stat().st_mtime
+    except OSError:
+        return None
+
+
+def _quarantine_solutions(child_out: Path, stamp: str) -> Optional[str]:
+    """Moves ``<child_out>/solutions/`` aside, out of the directory
+    ``_bank_solutions`` reads, and returns the destination path (or None
+    if there was nothing there).
+
+    The abort path fixes ``banked`` to ``[]`` in the receipt, but that is
+    an in-memory statement about ONE block. ``<child_out>`` is reused
+    (``mkdir(exist_ok=True)``, and ``loop._out_dir_for`` keys the
+    directory on ``cycle_id``, so a retried cycle lands on exactly the
+    same path), so an aborted block's artifacts left in ``solutions/``
+    are read by the NEXT block on that ``--out`` -- which has its own
+    ``watchdog_trips: 0`` and banks them. The grant's "one wrongful reset
+    that banks an artifact ends the grant" (CLAIMS.md:1014-1015) is then
+    unreachable: no single receipt shows both the trip and the bank.
+
+    Moved, never deleted: the artifacts of a wrongful reset are the
+    evidence a later reader needs to see, and destroying them would make
+    the abort unauditable. They just may not sit where banking looks."""
+    src_dir = Path(child_out) / "solutions"
+    if not src_dir.is_dir():
+        return None
+    quarantine_root = Path(child_out) / QUARANTINE_DIR_NAME
+    quarantine_root.mkdir(parents=True, exist_ok=True)
+    dest = quarantine_root / f"solutions-{stamp}"
+    n = 1
+    while dest.exists():
+        n += 1
+        dest = quarantine_root / f"solutions-{stamp}-{n}"
+    shutil.move(str(src_dir), str(dest))
+    return str(dest)
+
+
+def _bank_solutions(child_out: Path, repo: Path,
+                    since: Optional[float] = None) -> list:
+    """Copies every file under ``<child_out>/solutions/`` that this block
+    itself produced into ``<child_out>/sandbox/`` and returns the copies'
+    repo-relative paths. Called only after a clean stop with
+    `watchdog_trips == 0` -- never on the abort path, so `banked` is
+    `[]` by construction whenever a wrongful reset was caught.
+
+    ``since`` is the bank floor (``_make_bank_floor``): a file whose
+    mtime predates this block's own launch was not produced by this
+    block and is not this block's to bank. That is the second,
+    independent guard on the same hole ``_quarantine_solutions`` closes
+    -- an earlier aborted block on this same ``--out`` whose artifacts
+    were left behind (by a crash between the abort and the quarantine,
+    or by anything else that wrote into the directory) is excluded here
+    on the artifact's own timestamp, without depending on that earlier
+    block having run its own cleanup."""
     src_dir = Path(child_out) / "solutions"
     if not src_dir.is_dir():
         return []
@@ -508,6 +657,12 @@ def _bank_solutions(child_out: Path, repo: Path) -> list:
     for f in sorted(src_dir.iterdir()):
         if not f.is_file():
             continue
+        if since is not None:
+            try:
+                if f.stat().st_mtime < since:
+                    continue
+            except OSError:
+                continue
         dest = dest_dir / f.name
         shutil.copy2(f, dest)
         try:
@@ -603,8 +758,12 @@ def run_block(
     cmd = [str(c) for c in plan["cmd"]]
     grant_entry = plan.get("grant_entry")
     root_state_sha = plan.get("root_state_sha")
-    max_secs = float(plan.get("max_secs", 1200))
-    max_steps = int(plan.get("max_steps", 2_000_000))
+    # min(): the plan's value is a REQUEST, the grant's is the ceiling.
+    # A plan asking for more than the grant allows gets the grant's
+    # bound, never its own -- there is no path to a wider budget than
+    # what CLAIMS.md actually grants.
+    max_secs = min(float(plan.get("max_secs", GRANT_MAX_SECS)), GRANT_MAX_SECS)
+    max_steps = min(int(plan.get("max_steps", GRANT_MAX_STEPS)), GRANT_MAX_STEPS)
     injected = bool(plan.get("inject_wrongful_reset", False))
     attended_log = _resolve(repo, plan.get("attended_log")) or DEFAULT_ATTENDED_LOG
 
@@ -635,6 +794,10 @@ def run_block(
         # Ruling 17 judges a control on those two reading the same and
         # both equalling the grant's; a receipt that omits them cannot
         # settle that question later.
+        # Where an abort's `solutions/` was moved to, so the receipt
+        # names the evidence instead of leaving it to be found. None on
+        # every path that did not move one.
+        "quarantined_solutions": None,
         "root_state_path": None,
         "root_state_sha256_before": None,
         "root_state_sha256_after": None,
@@ -661,7 +824,7 @@ def run_block(
         return _finish(receipt)
 
     # ---- grant checks, before anything launches (LG rule 9) ----------
-    if not _grant_anchor_present(grant_entry, claims_path):
+    if not _grant_anchor_present(grant_entry, claims_path, wall_id):
         return _refuse("no_grant_anchor")
     if _grant_ended(grant_state_path):
         return _refuse("grant_ended")
@@ -672,6 +835,14 @@ def run_block(
     child_out = _resolve(repo, out_value)
     child_out.mkdir(parents=True, exist_ok=True)
     out_state["dir"] = child_out
+
+    # Before launch, so every artifact the child writes is strictly
+    # after it. A directory that cannot take this marker cannot be
+    # banked from safely, and refusing says so instead of falling back
+    # to banking whatever it finds.
+    bank_floor = _make_bank_floor(child_out)
+    if bank_floor is None:
+        return _refuse("bank_floor_unwritable")
 
     root_state_path = _resolve(repo, _flag_value(cmd, "--root-state"))
     # Kept pointing at the file the PLAN named, across the sandbox
@@ -730,6 +901,10 @@ def run_block(
     lock_path = child_out / ".run.lock"
 
     prev_row: Optional[dict] = None
+    # The runner WROTE the sandbox copy itself, above, so from launch
+    # onward a root state that will not read is a loss, never an
+    # absence. No latch needed: this is true at the first poll.
+    root_state_seen = root_state_path is not None
     stop: Optional[str] = None
     tripped = {"reason": None}
     injected_done = False
@@ -740,6 +915,12 @@ def run_block(
         cur_row = _tail_row(progress_path)
         holder = run_lock.read_lock(lock_path)
         holder_pid = holder.pid if holder is not None else None
+        # Present but unparseable: a live child never truncates or
+        # rewrites its own lock, so this is a trip. Missing entirely is
+        # NOT, deliberately: a child unlinks its own lock as it exits
+        # (atexit), and no ordering of these two reads can tell that
+        # apart from a reset without racing the child's own teardown.
+        lock_unreadable = holder is None and lock_path.exists()
         # Re-read every poll, never cached from before launch: a
         # wrongful reset that swaps the root file mid-block (including
         # the one this loop injects below) must be reachable, not only
@@ -750,6 +931,7 @@ def run_block(
             prev_row, cur_row,
             root_state_sha=root_state_sha, current_root_sha=current_root_sha,
             lock_holder_pid=holder_pid, child_pid=child_pid,
+            root_state_seen=root_state_seen, lock_unreadable=lock_unreadable,
         )
         if check["reason"] is not None:
             tripped = check
@@ -805,6 +987,12 @@ def run_block(
         receipt["aborted"] = True
         receipt["banked"] = []
         receipt["abort_reason"] = tripped["reason"]
+        # `banked: []` above is in-memory only. Move the artifacts
+        # themselves out of the directory the NEXT block on this same
+        # `--out` banks from, or that block reports them as its own with
+        # `watchdog_trips: 0` and the grant never ends.
+        receipt["quarantined_solutions"] = _quarantine_solutions(
+            child_out, started.replace(":", ""))
         # Defensive backstop (module docstring on _mark_grant_ended):
         # an aborted block banks nothing above, so this branch should
         # be unreachable in correct operation.
@@ -816,7 +1004,7 @@ def run_block(
             _hard_abort(child_pid, term_grace_s=term_grace_s,
                        kill_grace_s=kill_grace_s, sleep_fn=sleep_fn,
                        wall_clock_fn=wall_clock_fn)
-        receipt["banked"] = _bank_solutions(child_out, repo)
+        receipt["banked"] = _bank_solutions(child_out, repo, since=bank_floor)
 
     # The positive control is settled once, on every exit path, from
     # what the block DID -- never inside the abort branch, where the

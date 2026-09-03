@@ -54,11 +54,14 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+import src.forge.block as block_module  # noqa: E402
 from src.forge.block import (  # noqa: E402
     GRANT_POSITIVE_CONTROL_FIELDS,
     GRANT_RECEIPT_FIELDS,
+    DEFAULT_CLAIMS_PATH,
     ReceiptFieldError,
     _attended_hours,
+    _grant_anchor_present,
     append_attended,
     positive_control_caught,
     run_block,
@@ -66,7 +69,7 @@ from src.forge.block import (  # noqa: E402
     wrongful_reset,
 )
 
-ANCHOR = "FORGE-GRANT-gate_fixture-2026-09-01"
+ANCHOR = "FORGE-GRANT-gate_wall-2026-09-01"
 GRANT_ENTRY = f"CLAIMS.md#{ANCHOR}"
 
 _FIXTURE_SRC = '''\
@@ -89,6 +92,7 @@ WRITE_SOLUTION = {write_solution!r}
 EXIT_AFTER_ROWS = {exit_after_rows!r}
 SPAWN_DESCENDANT = {spawn_descendant!r}
 WRITE_OWN_RUN_LOCK = {write_own_run_lock!r}
+RELEASE_RUN_LOCK_ON_EXIT = {release_run_lock_on_exit!r}
 
 if WRITE_OWN_RUN_LOCK:
     # Same shape src.utils.run_lock.read_lock parses: pid on line 1,
@@ -97,6 +101,12 @@ if WRITE_OWN_RUN_LOCK:
     # on line 2. Own pid, so run_block's lock_holder_mismatch check
     # never fires and the test isolates the reset condition it wants.
     (out / ".run.lock").write_text(f"{{os.getpid()}}\\n\\n")
+    if RELEASE_RUN_LOCK_ON_EXIT:
+        # What the real solver does (`scripts/go_explore_solve.py`
+        # registers the unlink with atexit): a child that stops on its
+        # own takes its lock with it. Only a SIGKILL skips this.
+        import atexit
+        atexit.register(lambda: (out / ".run.lock").unlink(missing_ok=True))
 
 if SPAWN_DESCENDANT:
     # No start_new_session here -- this descendant inherits the SAME
@@ -131,12 +141,14 @@ def _write_fixture(tmp_path: Path, name: str, rows: list, *,
                     row_interval: float = 0.02, write_solution: bool = False,
                     exit_after_rows: bool = True,
                     spawn_descendant: bool = False,
-                    write_own_run_lock: bool = False) -> Path:
+                    write_own_run_lock: bool = False,
+                    release_run_lock_on_exit: bool = False) -> Path:
     script = tmp_path / f"{name}.py"
     script.write_text(_FIXTURE_SRC.format(
         rows=rows, row_interval=row_interval, write_solution=write_solution,
         exit_after_rows=exit_after_rows, spawn_descendant=spawn_descendant,
-        write_own_run_lock=write_own_run_lock))
+        write_own_run_lock=write_own_run_lock,
+        release_run_lock_on_exit=release_run_lock_on_exit))
     return script
 
 
@@ -497,6 +509,50 @@ def test_budget_stop_at_max_secs_and_max_steps(tmp_path):
 
 
 # ---------------------------------------------------------------------
+# test_plan_budget_above_grant_is_clamped_to_the_grant
+# ---------------------------------------------------------------------
+
+def test_plan_budget_above_grant_is_clamped_to_the_grant(tmp_path):
+    """CLAIMS.md fixes the grant's bound at `max_steps` 2,000,000 (FORGE-
+    GRANT-cv_hall-2026-09-01 and FORGE-GRANT-contra_wall-2026-09-01 both
+    read `max_secs` 1200 and `max_steps` 2000000 -- "Block bounds"). A
+    plan is a REQUEST; it must never be able to ask for more than the
+    grant allows and get it. Here the plan asks for `max_steps=
+    50_000_000`, 25x the grant -- if that request were honored, the
+    child (which only ever reaches 2,500,000) would run to completion
+    with no budget stop at all, well past the point the grant caps it.
+
+    Revert-verify (live, this session): with the clamp in place, the
+    block stops (`stop:"budget"`) at the row whose `steps` first reaches
+    the GRANT's 2,000,000, before the fixture's five rows finish
+    writing. Reverting `run_block` to read the plan's `max_steps`
+    directly (as it did before FORGE-FIX-12) makes the fixture's finite
+    row sequence exhaust and the child exit on its own well under the
+    inflated bound -- `stop` reads `"complete"`, not `"budget"`, and this
+    assertion fails by name. Restored, re-passed.
+    """
+    rows = [{"cells": i, "steps": i * 500_000} for i in range(1, 6)]
+    script = _write_fixture(
+        tmp_path, "budget_above_grant", rows=rows, row_interval=0.02,
+        exit_after_rows=True)
+    claims, grant_state = _grant_paths(tmp_path)
+    # Far above the grant's 1200s / 2_000_000-step bound in both dims;
+    # if either request value survived un-clamped, the child's finite,
+    # fast-finishing row sequence would exit cleanly long before either
+    # requested bound was ever reached.
+    plan = _make_plan(tmp_path, script, max_secs=999.0, max_steps=50_000_000)
+
+    receipt = run_block(
+        plan, repo=tmp_path, claims_path=claims, grant_state_path=grant_state,
+        poll_interval=0.005, term_grace_s=1.0, kill_grace_s=1.0)
+
+    assert receipt["stop"] == "budget", (
+        f"stop={receipt['stop']!r} -- plan's inflated max_steps was honored "
+        "instead of clamped to the grant's 2,000,000")
+    assert receipt["watchdog_trips"] == 0
+
+
+# ---------------------------------------------------------------------
 # test_refuses_without_grant_anchor
 # ---------------------------------------------------------------------
 
@@ -522,6 +578,111 @@ def test_refuses_without_grant_anchor(tmp_path):
     assert receipt["abort_reason"] == "no_grant_anchor"
     assert receipt["stop"] == "abort"
     assert receipt["banked"] == []
+
+
+# ---------------------------------------------------------------------
+# test_grant_anchor_gate_refuses_empty_foreign_and_body_only (FORGE-FIX-3)
+# ---------------------------------------------------------------------
+
+def _claims_with(tmp_path: Path, body: str) -> Path:
+    path = tmp_path / "CLAIMS.md"
+    path.write_text(body)
+    return path
+
+
+@pytest.mark.parametrize("case,grant_entry,wall_id,claims_body", [
+    # 1. The empty fragment. "#" and "CLAIMS.md#" both split to "", and
+    #    "" is a substring of every file, so the old test passed against
+    #    a CLAIMS.md holding no grant at all.
+    ("bare_hash", "#", "gate_wall", f"### {ANCHOR}\n\nsome grant text\n"),
+    ("empty_fragment", "CLAIMS.md#", "gate_wall",
+     f"### {ANCHOR}\n\nsome grant text\n"),
+    ("empty_fragment_empty_claims", "CLAIMS.md#", "gate_wall", "\n"),
+    # 2a. A foreign wall's landed grant. The heading is real and exact;
+    #     it is another wall's, and nothing tied the anchor to the plan.
+    ("foreign_wall", "CLAIMS.md#FORGE-GRANT-other_wall-2026-09-01", "gate_wall",
+     "### FORGE-GRANT-other_wall-2026-09-01\n\nanother wall's grant\n"),
+    # 2b. A truncated prefix of this wall's own real heading.
+    ("truncated_prefix", "CLAIMS.md#FORGE-GRANT-gate_wall", "gate_wall",
+     f"### {ANCHOR}\n\nsome grant text\n"),
+    # 3. The grant was withdrawn by deleting its heading, but the body
+    #    still quotes its own `grant_entry` the way both landed grants
+    #    do (CLAIMS.md:1001-1002, :1064-1065).
+    ("body_citation_only", GRANT_ENTRY, "gate_wall",
+     'Each block\'s plan carries `grant_entry:\n'
+     f'"{GRANT_ENTRY}"`; a plan without it is refused\n'
+     "before anything launches.\n"),
+    # 3b. Same shape, with the anchor sitting inside a paragraph rather
+    #     than in a code span.
+    ("prose_mention_only", GRANT_ENTRY, "gate_wall",
+     f"The withdrawn grant was {ANCHOR} and it is gone.\n"),
+], ids=["bare_hash", "empty_fragment", "empty_fragment_empty_claims",
+        "foreign_wall", "truncated_prefix", "body_citation_only",
+        "prose_mention_only"])
+def test_grant_anchor_gate_refuses_empty_foreign_and_body_only(
+        tmp_path, case, grant_entry, wall_id, claims_body):
+    """Seven ways a plan reached the emulator through a gate that was one
+    ``anchor in text`` substring test (FORGE-FIX-3, and the last two are
+    FORGE-FIX-36). Every one is refused before ``launch_fn`` is reached:
+    the spy raises if it is called, so a regression fails by name here
+    rather than by silently starting a child.
+
+    Revert-verify (live, this session), one corruption per new clause
+    and one for the pair. Each failure is the launch spy firing:
+    ``AssertionError: run_block launched a child after a refusal that
+    must precede launch``.
+      * Deleting ``if not wall_id or wall_id not in anchor`` reddens
+        ``[foreign_wall]`` alone, 1 failed / 31 passed.
+      * Replacing the heading regex with the old ``return anchor in
+        text`` reddens ``[truncated_prefix]``, ``[body_citation_only]``
+        and ``[prose_mention_only]``, 3 failed / 29 passed.
+      * Deleting both, which is the function exactly as it stands at
+        HEAD 4986043, reddens all seven, 7 failed / 25 passed. The three
+        empty-fragment cases show up only here: an empty anchor carries
+        no ``wall_id`` AND matches no heading, so either clause alone
+        closes that hole and neither is individually necessary for it.
+        There is deliberately no third ``if not anchor`` guard, since it
+        would have no case of its own.
+    All restored, all 32 re-passed.
+    """
+    claims = _claims_with(tmp_path, claims_body)
+    grant_state = tmp_path / "grant_state.json"
+    script = _write_fixture(tmp_path, f"unused_{case}", rows=[])
+    plan = _make_plan(tmp_path, script, wall_id=wall_id,
+                      grant_entry=grant_entry)
+
+    receipt = run_block(
+        plan, repo=tmp_path, claims_path=claims,
+        grant_state_path=grant_state, launch_fn=_forbidden_launch)
+
+    assert receipt["abort_reason"] == "no_grant_anchor"
+    assert receipt["aborted"] is True
+    assert receipt["stop"] == "abort"
+    assert receipt["banked"] == []
+
+
+# ---------------------------------------------------------------------
+# test_landed_grants_still_pass_the_tightened_anchor_gate (FORGE-FIX-3)
+# ---------------------------------------------------------------------
+
+@pytest.mark.parametrize("wall_id,anchor", [
+    ("cv_hall", "FORGE-GRANT-cv_hall-2026-09-01"),
+    ("contra_wall", "FORGE-GRANT-contra_wall-2026-09-01"),
+])
+def test_landed_grants_still_pass_the_tightened_anchor_gate(wall_id, anchor):
+    """The anti-vacuity half. A gate that refuses everything is not a
+    gate, so the two grants actually landed in this repo's own CLAIMS.md
+    have to keep passing, read from the real file at the real default
+    path with the real ``grant_entry`` string each grant names for
+    itself (CLAIMS.md:1001, :1064).
+
+    Revert-verify (live, this session): narrowing the heading depth from
+    ``#{1,6}`` to ``#{1,3}`` reddens both cases and nothing else, 2
+    failed / 30 passed, since both landed grants are ``####`` while this
+    file's own fixture grant is ``###``. Restored, both re-passed.
+    """
+    assert _grant_anchor_present(f"CLAIMS.md#{anchor}",
+                                 DEFAULT_CLAIMS_PATH, wall_id) is True
 
 
 # ---------------------------------------------------------------------
@@ -886,11 +1047,203 @@ def test_abort_path_never_banks_even_when_a_solution_file_exists(tmp_path):
         poll_interval=0.01, term_grace_s=1.0, kill_grace_s=1.0)
 
     assert receipt["stop"] == "abort"
-    sol = tmp_path / "out" / "solutions" / "sol_0.json"
-    assert sol.exists(), "fixture must have a real solution artifact on disk"
+    # The artifact was real and is still on disk, moved out of the
+    # directory banking reads rather than deleted (see
+    # test_abort_quarantines_the_solutions_directory for that half).
+    quarantined = receipt["quarantined_solutions"]
+    assert quarantined is not None
+    assert (Path(quarantined) / "sol_0.json").exists(), (
+        "fixture must have had a real solution artifact on disk")
     assert receipt["banked"] == [], (
         "a wrongful reset must bank nothing, even with a real solution "
         "artifact present at abort time")
+
+
+# ---------------------------------------------------------------------
+# test_abort_quarantines_the_solutions_directory
+# ---------------------------------------------------------------------
+
+def test_abort_quarantines_the_solutions_directory(tmp_path):
+    """`banked: []` on the abort path is a statement about one receipt,
+    in memory. The artifacts have to leave the directory the next block
+    on this same `--out` banks from, or that block reports them as its
+    own. Moved, not deleted: the evidence of a wrongful reset is the
+    thing a later reader most needs.
+
+    Revert-verify (live, this session): deleting the
+    `_quarantine_solutions` call from the abort branch of `run_block`
+    leaves `quarantined_solutions` None and `out/solutions/sol_0.json`
+    in place -- fails `assert quarantined is not None` by name.
+    Restored, re-passed.
+    """
+    script = _write_fixture(
+        tmp_path, "abort_quarantine",
+        rows=[{"cells": 100, "steps": 10}, {"cells": 150, "steps": 20},
+              {"cells": 40, "steps": 30}],
+        row_interval=0.05, write_solution=True, exit_after_rows=False)
+    claims, grant_state = _grant_paths(tmp_path)
+    plan = _make_plan(tmp_path, script)
+
+    receipt = run_block(
+        plan, repo=tmp_path, claims_path=claims, grant_state_path=grant_state,
+        poll_interval=0.01, term_grace_s=1.0, kill_grace_s=1.0)
+
+    assert receipt["stop"] == "abort"
+    quarantined = receipt["quarantined_solutions"]
+    assert quarantined is not None, (
+        "an aborted block must move its solutions/ out of the bank path")
+    assert (Path(quarantined) / "sol_0.json").exists(), (
+        "the artifact must be preserved, not destroyed")
+    assert not (tmp_path / "out" / "solutions").exists(), (
+        "solutions/ must no longer sit where _bank_solutions reads")
+
+
+# ---------------------------------------------------------------------
+# test_next_block_on_the_same_out_does_not_bank_an_aborted_blocks_work
+# ---------------------------------------------------------------------
+
+def test_next_block_on_the_same_out_does_not_bank_an_aborted_blocks_work(
+        tmp_path):
+    """The defect FORGE-FIX-9 names, end to end: `<--out>` is reused
+    (`mkdir(exist_ok=True)`, and `loop._out_dir_for` keys the directory
+    on `cycle_id`, so a retried cycle is the same path). A block that
+    aborts on a wrongful reset leaves its artifacts in `solutions/`; the
+    next block on that directory stops cleanly, banks them, and reports
+    `watchdog_trips: 0`. No single receipt then carries both the trip
+    and the bank, so the grant's "one wrongful reset that banks an
+    artifact ends the grant" (CLAIMS.md:1014-1015) can never fire.
+
+    The second block writes no solution of its own, so anything in
+    `banked` came from the first. Its rows climb from ABOVE the first
+    block's last row (100, 200 against the first's final 40) because
+    `progress.jsonl` is appended to, not cleared, on a reused `--out`:
+    a second child starting from a lower cell count trips the watchdog
+    against the previous run's tail. That is a separate defect
+    (FORGE-FIX-26) and this test steps around it rather than proving
+    it, so that a failure here is about banking and nothing else.
+
+    Revert-verify (live, this session): with BOTH guards removed --
+    the `_quarantine_solutions` call deleted from the abort branch AND
+    `since=bank_floor` dropped from the `_bank_solutions` call -- the
+    second block's `banked` reads `['out/sandbox/sol_0.json']` and the
+    final assertion fails by name. Each guard alone also holds this
+    test green, which is the point of having two; each is pinned on its
+    own by `test_abort_quarantines_the_solutions_directory` and
+    `test_bank_floor_excludes_an_artifact_predating_launch`. Restored,
+    re-passed.
+    """
+    claims, grant_state = _grant_paths(tmp_path)
+
+    aborting = _write_fixture(
+        tmp_path, "first_aborts",
+        rows=[{"cells": 100, "steps": 10}, {"cells": 150, "steps": 20},
+              {"cells": 40, "steps": 30}],
+        row_interval=0.05, write_solution=True, exit_after_rows=False)
+    first = run_block(
+        _make_plan(tmp_path, aborting), repo=tmp_path, claims_path=claims,
+        grant_state_path=grant_state, poll_interval=0.01,
+        term_grace_s=1.0, kill_grace_s=1.0)
+    assert first["stop"] == "abort"
+    assert first["banked"] == []
+
+    clean = _write_fixture(
+        tmp_path, "second_is_clean",
+        rows=[{"cells": 100, "steps": 100}, {"cells": 200, "steps": 200}],
+        row_interval=0.02, write_solution=False, exit_after_rows=True)
+    second = run_block(
+        _make_plan(tmp_path, clean, cycle_id="cycle_0"), repo=tmp_path,
+        claims_path=claims, grant_state_path=grant_state,
+        poll_interval=0.01, term_grace_s=1.0, kill_grace_s=1.0)
+
+    assert second["stop"] == "complete"
+    assert second["watchdog_trips"] == 0
+    assert second["banked"] == [], (
+        "a clean block must not bank the artifacts an earlier aborted "
+        "block left in the same --out")
+
+
+# ---------------------------------------------------------------------
+# test_bank_floor_excludes_an_artifact_predating_launch
+# ---------------------------------------------------------------------
+
+def test_bank_floor_excludes_an_artifact_predating_launch(tmp_path):
+    """The second, independent guard: an artifact whose mtime predates
+    this block's own launch was not produced by this block, whatever
+    left it there. This holds even if the earlier block never ran its
+    own quarantine (killed between the abort and the move, or a
+    directory written by something else entirely).
+
+    The block's own artifact, written after launch, still banks -- the
+    floor must exclude the stale file without excluding the real one.
+
+    Revert-verify (live, this session): dropping `since=bank_floor` from
+    the `_bank_solutions` call in `run_block` puts `out/sandbox/
+    sol_stale.json` in `banked` -- fails the `sol_stale.json not in`
+    assertion by name. Restored, re-passed.
+    """
+    stale_dir = tmp_path / "out" / "solutions"
+    stale_dir.mkdir(parents=True, exist_ok=True)
+    stale = stale_dir / "sol_stale.json"
+    stale.write_text(json.dumps({"from": "an earlier aborted block"}))
+    old = time.time() - 3600
+    os.utime(stale, (old, old))
+
+    script = _write_fixture(
+        tmp_path, "clean_over_stale",
+        rows=[{"cells": 10, "steps": 100}, {"cells": 20, "steps": 200}],
+        row_interval=0.02, write_solution=True, exit_after_rows=True)
+    claims, grant_state = _grant_paths(tmp_path)
+
+    receipt = run_block(
+        _make_plan(tmp_path, script), repo=tmp_path, claims_path=claims,
+        grant_state_path=grant_state, poll_interval=0.01,
+        term_grace_s=1.0, kill_grace_s=1.0)
+
+    assert receipt["stop"] == "complete"
+    assert stale.exists(), "the stale artifact is left alone, not destroyed"
+    banked = receipt["banked"]
+    assert any(b.endswith("sandbox/sol_0.json") for b in banked), (
+        "this block's OWN artifact must still bank")
+    assert not any(b.endswith("sol_stale.json") for b in banked), (
+        "an artifact predating launch is not this block's to bank")
+
+
+# ---------------------------------------------------------------------
+# test_out_dir_that_cannot_take_the_bank_floor_marker_is_refused
+# ---------------------------------------------------------------------
+
+def test_out_dir_that_cannot_take_the_bank_floor_marker_is_refused(
+        tmp_path, monkeypatch):
+    """No floor, no banking. An `--out` that cannot take the marker
+    would otherwise fall back to banking whatever it found, which is
+    the behaviour the floor exists to remove.
+
+    The unwritable directory is simulated by patching
+    `_make_bank_floor` to its own OSError return rather than by
+    chmodding `--out`: a genuinely read-only `--out` also blocks
+    `write_block_receipt`, so the block would die on the receipt write
+    and the refusal under test would never be the observed cause.
+
+    Revert-verify (live, this session): replacing the
+    `bank_floor_unwritable` refusal with `bank_floor = None` (bank
+    everything) launches the child, which `_forbidden_launch` turns
+    into an AssertionError -- fails by name. Restored, re-passed.
+    """
+    script = _write_fixture(
+        tmp_path, "never_launched",
+        rows=[{"cells": 10, "steps": 100}], exit_after_rows=True)
+    claims, grant_state = _grant_paths(tmp_path)
+    plan = _make_plan(tmp_path, script)
+
+    monkeypatch.setattr(block_module, "_make_bank_floor", lambda _out: None)
+    receipt = run_block(
+        plan, repo=tmp_path, claims_path=claims,
+        grant_state_path=grant_state, launch_fn=_forbidden_launch,
+        poll_interval=0.01)
+
+    assert receipt["stop"] == "abort"
+    assert receipt["abort_reason"] == "bank_floor_unwritable"
+    assert receipt["banked"] == []
 
 
 # ---------------------------------------------------------------------
@@ -1166,3 +1519,173 @@ def test_attended_hook_records_who_and_what_was_checked(tmp_path):
     assert rows[2]["start"] == rows[2]["end"] == "2026-09-02T14:00:00"
     assert _attended_hours(log) == 1.0, (
         "a checkpoint row with no interval must contribute no hours")
+
+
+# ---------------------------------------------------------------------
+# FORGE-FIX-4: an unreadable watchdog input is a trip, not a blind spot
+# ---------------------------------------------------------------------
+
+@pytest.mark.parametrize("mode", ["unlink", "chmod"])
+def test_root_state_made_unreadable_mid_block_trips_the_watchdog(tmp_path, mode):
+    """A monotone, never-misbehaving child with a valid `root_state_sha`,
+    whose sandboxed root-state copy is DELETED (or made unreadable) out
+    from under the poll loop partway through the block.
+
+    Before FORGE-FIX-4 this switched condition 3 off for the rest of the
+    block instead of tripping it: `_sha_of_file` returns None on any
+    OSError (`src/forge/block.py:257-258` at HEAD `4986043`) and
+    `wrongful_reset` skipped the comparison whenever `current_root_sha`
+    was None (`:381`), so the block ran to `stop:"complete"` and reached
+    `_bank_solutions`. `write_solution=True` here so `banked == []` is a
+    real assertion and not vacuously true for want of anything to bank.
+
+    Revert-verify (live, this session), both modes: deleting the
+    `if root_state_seen and current_root_sha is None` branch from
+    `wrongful_reset` puts the block back on `stop:"complete"`,
+    `watchdog_trips:0`, `banked:["out/sandbox/sol_0.json"]` -- fails on
+    the first assertion by name. Restored, re-passed. Separately,
+    initialising `root_state_seen = False` instead of
+    `root_state_path is not None` in `run_block` fails the same way
+    (nothing ever sets the latch once the file stops reading).
+    """
+    root_path, correct_sha = _write_root_state(tmp_path)
+    rows = [{"cells": i, "steps": i} for i in range(1, 41)]
+    script = _write_fixture(tmp_path, "root_lost", rows=rows,
+                            row_interval=0.03, write_solution=True,
+                            exit_after_rows=False)
+    claims, grant_state = _grant_paths(tmp_path)
+    plan = _make_plan(tmp_path, script, root_state_path=root_path,
+                      root_state_sha=correct_sha, max_secs=5.0)
+    copy_path = tmp_path / "out" / "sandbox" / f"root_state{root_path.suffix}"
+
+    def _break_after_delay():
+        deadline = time.time() + 2.0
+        while not copy_path.exists() and time.time() < deadline:
+            time.sleep(0.005)
+        if mode == "unlink":
+            copy_path.unlink()
+        else:
+            os.chmod(copy_path, 0o000)
+
+    breaker = threading.Thread(target=_break_after_delay, daemon=True)
+    breaker.start()
+    receipt = run_block(
+        plan, repo=tmp_path, claims_path=claims, grant_state_path=grant_state,
+        poll_interval=0.01, term_grace_s=1.0, kill_grace_s=1.0)
+    breaker.join(timeout=2.0)
+    if mode == "chmod" and copy_path.exists():
+        os.chmod(copy_path, 0o644)
+
+    assert receipt["stop"] == "abort"
+    assert receipt["abort_reason"] == "root_state_lost"
+    assert receipt["watchdog_trips"] == 1
+    assert receipt["aborted"] is True
+    assert receipt["banked"] == []
+    assert receipt["positive_control"]["caught"] is False
+
+
+def test_child_run_lock_made_unreadable_mid_block_trips_the_watchdog(tmp_path):
+    """The same blind spot on condition 4. The child writes its own
+    `.run.lock`, the runner reads it, and then the lock is truncated to
+    garbage out from under the loop while the child is still running.
+
+    `run_lock.read_lock` returns None for a missing OR unparseable lock
+    (`src/utils/run_lock.py:100-101`), so before FORGE-FIX-4 the holder
+    comparison went off for the rest of the block. Truncation rather
+    than deletion here so the case being pinned is the "garbled" half of
+    that `None`, which no unlink test would reach.
+
+    Revert-verify (live, this session): deleting the `if lock_unreadable`
+    branch from `wrongful_reset` runs the block to `stop:"budget"` with
+    `watchdog_trips:0` -- fails the first assertion by name. Restored,
+    re-passed.
+    """
+    rows = [{"cells": i, "steps": i} for i in range(1, 41)]
+    script = _write_fixture(tmp_path, "lock_lost", rows=rows,
+                            row_interval=0.03, exit_after_rows=False,
+                            write_own_run_lock=True)
+    claims, grant_state = _grant_paths(tmp_path)
+    plan = _make_plan(tmp_path, script, max_secs=5.0)
+    lock_path = tmp_path / "out" / ".run.lock"
+
+    def _garble_after_delay():
+        deadline = time.time() + 2.0
+        while not lock_path.exists() and time.time() < deadline:
+            time.sleep(0.005)
+        time.sleep(0.05)  # let at least one poll read it intact
+        lock_path.write_text("not-a-pid\n")
+
+    garbler = threading.Thread(target=_garble_after_delay, daemon=True)
+    garbler.start()
+    receipt = run_block(
+        plan, repo=tmp_path, claims_path=claims, grant_state_path=grant_state,
+        poll_interval=0.01, term_grace_s=1.0, kill_grace_s=1.0)
+    garbler.join(timeout=2.0)
+
+    assert receipt["stop"] == "abort"
+    assert receipt["abort_reason"] == "lock_unreadable"
+    assert receipt["watchdog_trips"] == 1
+
+
+def test_child_releasing_its_own_lock_on_a_clean_exit_is_not_a_trip(tmp_path):
+    """The regression the `lock_seen` latch could have introduced, and
+    the reason it is dropped again when the child is gone.
+
+    A well-behaved child unlinks its own `.run.lock` as it exits (the
+    real solver registers that unlink with atexit). The poll after that
+    exit reads the lock as None having read it as the child's pid a
+    moment earlier, which is the same `None` the new condition trips
+    on. It must not: the child is dead, the lock went with it, the block
+    stopped cleanly and its solution is banked. This is why
+    `lock_unreadable` is `holder is None AND lock_path.exists()` and not
+    a latch on "the lock was readable once": the first draft of this fix
+    used the latch, de-latched on `not _pid_alive(child_pid)`, and this
+    test caught it failing intermittently -- atexit unlinks the lock
+    BEFORE the process dies, so a poll can land inside that window and
+    see a live child with no lock.
+
+    Revert-verify (live, this session): widening the condition to
+    `lock_unreadable = holder is None` (dropping the `and
+    lock_path.exists()`) turns every clean-exiting child that holds a
+    lock into `stop:"abort"`, `abort_reason:"lock_unreadable"`,
+    `banked:[]` -- fails all three assertions below by name. Restored,
+    re-passed.
+    """
+    script = _write_fixture(
+        tmp_path, "lock_clean_exit",
+        rows=[{"cells": 10, "steps": 10}, {"cells": 20, "steps": 20}],
+        row_interval=0.03, write_solution=True, exit_after_rows=True,
+        write_own_run_lock=True, release_run_lock_on_exit=True)
+    claims, grant_state = _grant_paths(tmp_path)
+    plan = _make_plan(tmp_path, script, max_secs=5.0)
+
+    receipt = run_block(
+        plan, repo=tmp_path, claims_path=claims, grant_state_path=grant_state,
+        poll_interval=0.01, term_grace_s=1.0, kill_grace_s=1.0)
+
+    assert receipt["stop"] == "complete"
+    assert receipt["watchdog_trips"] == 0
+    assert receipt["banked"] == ["out/sandbox/sol_0.json"]
+
+
+def test_wrongful_reset_catches_a_root_state_that_stopped_reading():
+    got = wrongful_reset(None, None, root_state_sha="aaa",
+                         current_root_sha=None, root_state_seen=True)
+    assert got == {"reason": "root_state_lost"}
+
+
+def test_wrongful_reset_catches_a_lock_that_stopped_reading():
+    got = wrongful_reset(None, None, lock_holder_pid=None, child_pid=111,
+                         lock_unreadable=True)
+    assert got == {"reason": "lock_unreadable"}
+
+
+def test_wrongful_reset_still_ignores_a_file_it_has_never_read():
+    """The default both ways round: a caller that has not yet read the
+    root state or the lock keeps the old "nothing to compare" reading,
+    so a pre-launch or unit call site cannot manufacture a trip out of
+    a file that was simply never there."""
+    assert wrongful_reset(None, None, root_state_sha="aaa",
+                          current_root_sha=None) == {"reason": None}
+    assert wrongful_reset(None, None, lock_holder_pid=None,
+                          child_pid=111) == {"reason": None}
