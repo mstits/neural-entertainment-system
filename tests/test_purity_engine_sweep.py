@@ -82,11 +82,15 @@ from purity_engine_scan import (  # noqa: E402
     VALID_DISPOSITIONS,
     Quarantine,
     check_disclosures,
+    classify_declared,
+    ignored_dir_prefixes,
+    is_local_data_path,
     load_disclosures,
     quarantines,
     scan_python,
     scan_quarantined_uses,
     scan_rust,
+    site_file,
     witness_ledger,
 )
 
@@ -209,13 +213,127 @@ def test_no_disclosure_is_stale() -> None:
     """A declaration for a site that no longer exists is how a disclosure
     record rots into a blanket exemption: the rows outlive the code, and
     the next real breach lands on a site some ghost row already 'covers'.
+
+    STALE means the file is HERE and the address is gone. A file that is
+    not in this checkout at all was never scanned, so "no such live site"
+    is not something this checkout knows — see
+    `test_a_gitignored_file_absent_from_the_clone_is_unverifiable_not_stale`.
     """
     live = {s.site_id for s in scan_quarantined_uses() if s.enforced}
-    stale = sorted(set(_declared()) - live)
+    stale, _ = classify_declared(_declared(), live, REPO)
     assert not stale, (
         f"disclosure rows with no matching live site: {stale}. The use was "
         f"removed (good) or renamed. Delete the row and lower "
         f"`max_enforced_sites`.")
+
+
+# ---------------------------------------------------------------------
+# STALE vs UNVERIFIABLE. Four disclosure rows point at measurement probes
+# under the git-ignored `runs/` tree; they are present on the machine
+# that ran the clear_recensus sweep and absent on every clone. The old
+# rule read "declared but not found" as "removed", so a tracked ledger
+# naming untracked files failed this module for every clone — and the two
+# obvious fixes (delete the rows / skip the module) each delete a live
+# gate. Both directions of the new discriminant are mutation-tested
+# below, on synthetic trees, unconditionally.
+# ---------------------------------------------------------------------
+
+def test_a_gitignored_file_absent_from_the_clone_is_unverifiable_not_stale(
+        tmp_path: Path) -> None:
+    """The bug, in miniature: the file is not here AND `.gitignore` says
+    it never would be. Nothing was scanned, so nothing is known — and
+    "delete the row, lower the ratchet" would destroy a disclosure that is
+    live wherever the data exists."""
+    (tmp_path / ".gitignore").write_text("runs/\n")
+    stale, unver = classify_declared(
+        {"runs/probe.py::LEVEL::0x0030"}, set(), tmp_path)
+    assert stale == []
+    assert unver == ["runs/probe.py::LEVEL::0x0030"]
+
+
+def test_an_absent_file_that_is_not_gitignored_is_still_stale(
+        tmp_path: Path) -> None:
+    """The allowance must not generalise to "any file I cannot find". A
+    tracked file that lost its site is the case the STALE rule exists
+    for, and deleting a tracked file does not buy its row a pass."""
+    (tmp_path / ".gitignore").write_text("runs/\n")
+    stale, unver = classify_declared(
+        {"src/gui/play_window.py::r[0x70]::0x0070"}, set(), tmp_path)
+    assert stale == ["src/gui/play_window.py::r[0x70]::0x0070"]
+    assert unver == []
+
+
+def test_a_present_gitignored_file_whose_site_is_gone_is_still_stale(
+        tmp_path: Path) -> None:
+    """THE ANTI-VACUITY HALF, and the reason this is not an exemption for
+    `runs/`. The allowance is keyed on the file being ABSENT, so on the
+    machine that HAS the run data every one of these rows is enforced
+    exactly as before. Moving a site under `runs/` buys nothing there."""
+    (tmp_path / ".gitignore").write_text("runs/\n")
+    (tmp_path / "runs").mkdir()
+    (tmp_path / "runs" / "probe.py").write_text("# the address is gone\n")
+    stale, unver = classify_declared(
+        {"runs/probe.py::LEVEL::0x0030"}, set(), tmp_path)
+    assert stale == ["runs/probe.py::LEVEL::0x0030"]
+    assert unver == []
+
+
+def test_a_tree_with_no_gitignore_gets_the_strictest_rule(
+        tmp_path: Path) -> None:
+    """Tolerated prefixes are DERIVED from the repo's own `.gitignore`,
+    never hand-listed. A tree without one tolerates nothing, which is why
+    every synthetic fixture in this module runs against the old rule and
+    cannot pass because of this branch."""
+    assert ignored_dir_prefixes(tmp_path) == ()
+    stale, unver = classify_declared(
+        {"runs/probe.py::LEVEL::0x0030"}, set(), tmp_path)
+    assert stale == ["runs/probe.py::LEVEL::0x0030"]
+    assert unver == []
+
+
+def test_only_plain_directory_ignore_lines_are_honoured() -> None:
+    """The reader parses a SUBSET of gitignore syntax on purpose. A
+    globbed or negated pattern is not understood, and anything not
+    understood keeps the strict rule — `roms/*` is `!roms/.test_roms/`d
+    back in two lines later, and a half-read negation is how a checker
+    starts exempting things nobody meant to exempt."""
+    prefixes = ignored_dir_prefixes(REPO)
+    assert "runs/" in prefixes, (
+        "`runs/` is no longer read out of .gitignore; the four contra "
+        "probe rows would go back to failing every clone as STALE")
+    for globbed in ("roms/*", "reports/*", "roms/", "reports/"):
+        assert globbed not in prefixes, (
+            f"{globbed!r} was accepted as a tolerated prefix. It is "
+            f"globbed and/or re-included by a `!` line, and treating it "
+            f"as blanket-ignored would exempt tracked files.")
+    assert not any(p.startswith("!") for p in prefixes)
+
+
+def test_the_unverifiable_blind_spot_is_ratcheted_and_declared() -> None:
+    """An unverifiable row is a row THIS checkout cannot check. That is a
+    real cost, so it is counted, capped, and each row has to say out loud
+    which checkouts cannot see it — enforced by PATH, so it fires on the
+    machine where the file is present too."""
+    doc = load_disclosures()
+    ucap = doc.get("max_unverifiable_sites")
+    assert isinstance(ucap, int), (
+        "`max_unverifiable_sites:` must be an int — it is the ratchet on "
+        "the gate's blind spot, and without it the absent-file allowance "
+        "is a hatch that widens silently.")
+    live = {s.site_id for s in scan_quarantined_uses() if s.enforced}
+    _, unver = classify_declared(_declared(), live, REPO)
+    assert len(unver) <= ucap, (
+        f"{len(unver)} unverifiable rows against a cap of {ucap}: {unver}. "
+        f"Track the file or delete the site; do not raise the cap.")
+    for site, row in sorted(_declared().items()):
+        if not is_local_data_path(site_file(site), REPO):
+            continue
+        v = str(row.get("absent_when", "")).strip()
+        assert len(v) >= 25 and v.lower() not in VACUOUS, (
+            f"{site} sits under a git-ignored directory, so it reads "
+            f"UNVERIFIABLE on a clone. It must carry an `absent_when` "
+            f"naming which checkouts cannot see it and what that costs "
+            f"the gate.")
 
 
 def test_the_site_count_ratchets_downward_only() -> None:
@@ -227,9 +345,17 @@ def test_the_site_count_ratchets_downward_only() -> None:
     assert isinstance(cap, int), (
         "`max_enforced_sites:` must be an int — it is the ratchet.")
     live = [s for s in scan_quarantined_uses() if s.enforced]
-    assert len(live) <= cap, (
-        f"{len(live)} enforced sites against a cap of {cap}. A quarantined "
-        f"address became live in code. Remove the use; do not raise the cap.")
+    # live PLUS unverifiable. A checkout without the git-ignored run data
+    # scans four fewer sites; counting only what it can see would hand it
+    # four units of ratchet slack, which is how a real breach lands on a
+    # clone without tripping the number.
+    _, unver = classify_declared(
+        _declared(), {s.site_id for s in live}, REPO)
+    accounted = len(live) + len(unver)
+    assert accounted <= cap, (
+        f"{accounted} enforced sites against a cap of {cap} ({len(live)} "
+        f"scanned here, {len(unver)} unverifiable). A quarantined address "
+        f"became live in code. Remove the use; do not raise the cap.")
 
 
 def test_every_disclosure_is_non_vacuous() -> None:
@@ -456,11 +582,19 @@ def _assertions_failing_against(repo: Path, disclosure_doc: dict) -> int:
     failures = 0
     # (a) undeclared live sites
     failures += sum(1 for s in live if s.site_id not in declared)
-    # (b) stale declarations
-    failures += len(set(declared) - {s.site_id for s in live})
-    # (c) the ratchet
+    # (b) stale declarations. Same three-state rule as the real check: a
+    # row whose file is not in this reconstruction AND is git-ignored is
+    # unverifiable, not stale. Counting those here would make the
+    # baseline non-zero on any clone and every revert count below
+    # meaningless.
+    stale, unver = classify_declared(
+        declared, {s.site_id for s in live}, repo)
+    failures += len(stale)
+    # (c) the ratchet, counted the way check_disclosures() counts it:
+    # live PLUS unverifiable, so a checkout without the run data does not
+    # get one unit of slack per row it cannot see.
     cap = disclosure_doc.get("max_enforced_sites")
-    if not isinstance(cap, int) or len(live) > cap:
+    if not isinstance(cap, int) or len(live) + len(unver) > cap:
         failures += 1
     # (d) vacuous rows
     for row in declared.values():
@@ -479,6 +613,11 @@ def real_tree(tmp_path: Path) -> Path:
     (dst / "nes_core").mkdir(parents=True)
     shutil.copytree(REPO / "configs", dst / "configs")
     shutil.copytree(REPO / "nes_core" / "src", dst / "nes_core" / "src")
+    # The reconstruction needs the repo's own `.gitignore`: the STALE vs
+    # UNVERIFIABLE rule derives its tolerated prefixes from it, and
+    # without it this tree would call the absent `runs/` probes STALE and
+    # the baseline below would never be 0 on a clone.
+    shutil.copy(REPO / ".gitignore", dst / ".gitignore")
     for rel in ("docs/receipts/games/zelda_hp_ladder_probe.py",
                 "scripts/tracing/nes_core_nmi_trace.py",
                 # Revealed 2026-08-27 when the Python patterns stopped
@@ -486,11 +625,28 @@ def real_tree(tmp_path: Path) -> Path:
                 # the reconstruction or their disclosure rows read STALE
                 # here while being live in the real tree.
                 "src/gui/play_window.py",
+                # Under git-ignored `runs/`, so these two exist on the
+                # machine that ran the clear_recensus sweep and on no
+                # clone. Copy them WHEN PRESENT — that is what keeps the
+                # reconstruction faithful to whichever checkout it runs
+                # on, and it is what makes the enforcement self-closing:
+                # where the file exists it is copied, scanned, and its row
+                # enforced exactly as any other.
                 "runs/clear_recensus/contra/probe_stage_bytes.py",
                 "runs/clear_recensus/contra/probe_live_stage_bytes.py"):
+        src = REPO / rel
+        if not src.exists():
+            # Absence is only acceptable for the git-ignored ones. A
+            # TRACKED file going missing is a broken checkout, and
+            # swallowing that would let the reconstruction quietly shrink
+            # until the revert counts below stop meaning anything.
+            assert is_local_data_path(rel, REPO), (
+                f"{rel} is tracked but missing from this checkout; the "
+                f"reconstruction cannot be built from it.")
+            continue
         p = dst / rel
         p.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy(REPO / rel, p)
+        shutil.copy(src, p)
     return dst
 
 

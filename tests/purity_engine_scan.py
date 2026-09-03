@@ -559,6 +559,124 @@ def load_disclosures(path: Path | None = None) -> dict:
     return _load_yaml(path)
 
 
+# =====================================================================
+# 3c. THREE STATES, NOT TWO — "the site is gone" vs "the file is not here"
+#
+# The staleness rule used to be `set(declared) - live`, which reads every
+# declared site the scan did not find as a site that was REMOVED. That is
+# a false statement whenever the file was never scanned in the first
+# place, and this tree has exactly that case: four disclosure rows point
+# at `runs/clear_recensus/contra/probe_*_stage_bytes.py`, real
+# measurement probes that live under the git-ignored `runs/` tree. They
+# are present on the machine that ran the recensus and absent on every
+# clone, so the tracked ledger named files the clone cannot see and the
+# suite failed for everyone else.
+#
+# The two wrong fixes, named so they stay rejected:
+#   * DELETE THE ROWS. That destroys a live disclosure — the probes exist
+#     and read quarantined bytes on the machine that has them.
+#   * SKIP THE MODULE on a clone. That deletes the whole gate for every
+#     clone, which is worse than the bug.
+#
+# So the checker learns the distinction instead. The allowance is narrow
+# by construction: it opens ONLY where the tree physically cannot answer
+# the question, and it closes the moment the file exists.
+# =====================================================================
+
+#: A `.gitignore` line this reader is willing to act on: a plain relative
+#: directory prefix. No globs, no negation, no leading slash.
+#:
+#: This is deliberately a SUBSET of gitignore semantics and not a
+#: reimplementation of them. `roms/*` and `reports/*` are excluded because
+#: they carry a glob and are re-included further down by `!` lines, and a
+#: half-understood negation is how a checker starts exempting things
+#: nobody meant to exempt. Every pattern shape this declines to parse
+#: simply keeps the OLD, STRICTER staleness rule — the conservative
+#: direction is the enforcing one.
+_PLAIN_IGNORED_DIR = re.compile(r"^[A-Za-z0-9_.][A-Za-z0-9_./-]*/$")
+
+
+def ignored_dir_prefixes(repo: Path) -> tuple[str, ...]:
+    """Directory prefixes this repo's own `.gitignore` says are untracked.
+
+    Derived from the repository's record, never hand-listed here — the
+    same discipline the quarantine address set itself is under, and for
+    the same reason: a hand-listed exemption drifts from the thing it
+    claims to describe, silently.
+
+    NOT cached. A tree with no `.gitignore` — every synthetic fixture in
+    the mutation tests — gets an EMPTY tuple, so those tests run against
+    the strictest possible rule and cannot pass because of this branch.
+    """
+    try:
+        text = (repo / ".gitignore").read_text()
+    except Exception:
+        return ()
+    out: set[str] = set()
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith(("#", "!", "/")):
+            continue
+        if any(c in line for c in "*?[]"):
+            continue
+        if _PLAIN_IGNORED_DIR.match(line):
+            out.add(line)
+    return tuple(sorted(out))
+
+
+def site_file(site_id: str) -> str:
+    """The file half of a `file::symbol::0xADDR` site id."""
+    return site_id.split("::", 1)[0]
+
+
+def is_local_data_path(rel: str, repo: Path) -> bool:
+    """Does `rel` sit under a directory this repo's `.gitignore` excludes?
+
+    A PATH question, not an existence question, on purpose: it gives the
+    same answer on the machine that has the run data and on a clone that
+    does not, so the `absent_when` requirement below is machine-
+    independent and cannot be satisfied only where nobody is looking.
+    """
+    norm = rel.replace("\\", "/")
+    return any(norm.startswith(p) for p in ignored_dir_prefixes(repo))
+
+
+def classify_declared(declared_sites, live_site_ids,
+                      repo: Path | None = None) -> tuple[list[str], list[str]]:
+    """Split declared-but-not-found rows into `(stale, unverifiable)`.
+
+      STALE         the file IS here and the address is gone. The use was
+                    removed (good) or renamed. Delete the row and lower
+                    the ratchet. This rule is UNCHANGED.
+      UNVERIFIABLE  the file is NOT here at all AND its path is under a
+                    git-ignored directory. Nothing was scanned, so
+                    nothing is known. Calling that "removed" is a false
+                    statement, and acting on it would delete a
+                    disclosure that is live wherever the data exists.
+
+    What is deliberately NOT tolerated, so the hatch cannot be widened:
+
+      * A file that is absent but TRACKED is still STALE. Deleting a
+        tracked file does not buy its row a pass.
+      * A file that is PRESENT is enforced exactly as before, whatever
+        directory it sits in. Moving a real breach under `runs/` hides
+        nothing: on any machine where that file exists it is scanned and
+        must be declared, and on a machine where it does not exist the
+        code is not running there either.
+    """
+    repo = repo if repo is not None else REPO
+    live = set(live_site_ids)
+    stale: list[str] = []
+    unverifiable: list[str] = []
+    for site in sorted(set(declared_sites) - live):
+        rel = site_file(site)
+        if not (repo / rel).exists() and is_local_data_path(rel, repo):
+            unverifiable.append(site)
+        else:
+            stale.append(site)
+    return stale, unverifiable
+
+
 def check_disclosures(repo: Path | None = None,
                       disclosures: dict | None = None) -> list[str]:
     """Every reason the tree fails the engine-quarantine check, as text.
@@ -571,6 +689,7 @@ def check_disclosures(repo: Path | None = None,
     doc = disclosures if disclosures is not None else load_disclosures(
         (repo / "docs" / "purity" / "engine_quarantine_disclosures.yaml")
         if repo is not None else None)
+    repo_root = repo if repo is not None else REPO
     declared = {str(r["site"]): r for r in (doc.get("sites") or [])
                 if isinstance(r, dict) and r.get("site")}
     live = [s for s in scan_quarantined_uses(repo) if s.enforced]
@@ -582,16 +701,44 @@ def check_disclosures(repo: Path | None = None,
                 f"UNDECLARED  {s.file}:{','.join(map(str, s.lines))}  "
                 f"{s.symbol} = 0x{s.addr:04X}  quarantined by "
                 f"{'; '.join(s.quarantines)}")
-    for site in sorted(set(declared) - {s.site_id for s in live}):
+    stale, unverifiable = classify_declared(
+        declared, {s.site_id for s in live}, repo_root)
+    for site in stale:
         problems.append(f"STALE       {site} — declared, but no such live site")
 
+    # The cap is compared against live PLUS unverifiable, not against
+    # live alone. Counting only what this checkout can see would hand a
+    # clone one unit of ratchet slack per absent row — on 2026-09-03 that
+    # was four, enough that reintroducing the Punch-Out latch on a clone
+    # raised the count to 21 against a cap of 24 and the ratchet stayed
+    # quiet. Adding the unverifiable rows back makes the total 24 on
+    # every checkout, so the ratchet has ZERO slack everywhere and one
+    # new breach trips it whether or not the run data is present.
+    accounted = len(live) + len(unverifiable)
     cap = doc.get("max_enforced_sites")
     if not isinstance(cap, int):
         problems.append("RATCHET     `max_enforced_sites:` is missing or not an int")
-    elif len(live) > cap:
+    elif accounted > cap:
         problems.append(
-            f"RATCHET     {len(live)} enforced sites against a cap of {cap}. "
+            f"RATCHET     {accounted} enforced sites against a cap of {cap} "
+            f"({len(live)} scanned here, {len(unverifiable)} unverifiable). "
             f"Remove the use; do not raise the cap.")
+
+    # Second ratchet, on the BLIND SPOT rather than on the breaches. An
+    # unverifiable row is a row this checkout cannot check, and the number
+    # of them may only go down. Without this the new allowance would be a
+    # hatch that quietly widens; with it, moving a site under `runs/` costs
+    # a deliberate edit with a number in it, exactly like raising the
+    # enforced cap does.
+    ucap = doc.get("max_unverifiable_sites")
+    if not isinstance(ucap, int):
+        problems.append(
+            "RATCHET     `max_unverifiable_sites:` is missing or not an int")
+    elif len(unverifiable) > ucap:
+        problems.append(
+            f"RATCHET     {len(unverifiable)} unverifiable site(s) against a "
+            f"cap of {ucap}: {', '.join(unverifiable)}. The gate's blind spot "
+            f"may not widen; do not raise the cap.")
 
     for site, row in sorted(declared.items()):
         for f in REQUIRED_FIELDS:
@@ -605,6 +752,20 @@ def check_disclosures(repo: Path | None = None,
                 and len(str(row.get("earns_it", "")).strip()) < 25):
             problems.append(
                 f"VACUOUS     {site}: LIVE_UNRETRACTED with no usable `earns_it`")
+        # Path-based, so this fires on EVERY machine — including the one
+        # where the file is present and the row is being enforced
+        # normally. A row that will read UNVERIFIABLE on somebody else's
+        # clone has to say so out loud here, or the blind spot exists
+        # without ever being written down, which is the silence this
+        # whole file replaced.
+        if is_local_data_path(site_file(site), repo_root):
+            v = str(row.get("absent_when", "")).strip()
+            if len(v) < 25 or v.lower() in VACUOUS:
+                problems.append(
+                    f"VACUOUS     {site}: sits under a git-ignored directory, "
+                    f"so it is UNVERIFIABLE on a clone. It must carry an "
+                    f"`absent_when` naming which checkouts cannot see the "
+                    f"file and what that costs the gate.")
     return problems
 
 
@@ -752,8 +913,16 @@ if __name__ == "__main__":  # pragma: no cover - operator entry point
                   f"retracts the documentation claim, not the constant — "
                   f"see {DISCLOSURES.relative_to(REPO)}.")
             raise SystemExit(1)
-        n = sum(1 for s in scan_quarantined_uses() if s.enforced)
-        print(f"purity: {n} live quarantined-address site(s), all disclosed.")
+        sites = scan_quarantined_uses()
+        n = sum(1 for s in sites if s.enforced)
+        _, unver = classify_declared(
+            {str(r["site"]) for r in (load_disclosures().get("sites") or [])
+             if isinstance(r, dict) and r.get("site")},
+            {s.site_id for s in sites if s.enforced})
+        note = (f" {len(unver)} row(s) unverifiable here (file under a "
+                f"git-ignored directory)." if unver else "")
+        print(f"purity: {n} live quarantined-address site(s), all "
+              f"disclosed.{note}")
     else:
         sites = scan_quarantined_uses()
         for s in sites:

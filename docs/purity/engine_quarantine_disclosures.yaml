@@ -66,6 +66,25 @@ checked_by: tests/test_purity_engine_sweep.py
 # pre-dates this edit. The cap moves down from 24 as they are removed.
 max_enforced_sites: 24
 
+# Second ratchet, on the BLIND SPOT rather than on the breaches.
+#
+# Four rows below point at measurement probes that live under `runs/`,
+# which `.gitignore` excludes as "local experiment artifacts ... never
+# committed". They exist on the machine that ran the clear_recensus sweep
+# and on no clone. Before 2026-09-03 the checker read "declared but not
+# found" as "the site was removed" and every clone failed
+# `test_no_disclosure_is_stale` on rows that are perfectly live wherever
+# the data is — a tracked ledger naming untracked files.
+#
+# The checker now tells the two apart: a file that is HERE and no longer
+# carries the address is STALE exactly as before; a file that is NOT here
+# and sits under a git-ignored directory is UNVERIFIABLE, and this number
+# caps how many of those the record may carry. It may be LOWERED (track
+# the file, or delete the probe) and never raised. Every such row must
+# also carry an `absent_when`, which is enforced by PATH and therefore on
+# every machine — including the ones where the file is present.
+max_unverifiable_sites: 4
+
 # --------------------------------------------------------------------------
 # Dispositions — what KIND of admission each row is making.
 #
@@ -402,6 +421,17 @@ sites:
       probes like this one produced.
     earns_it: n/a
     behaviour: UNCHANGED
+    absent_when: >-
+      On any clone. `runs/` is git-ignored ("local experiment artifacts
+      ... never committed") and this probe was never force-added, so the
+      file exists only on the machine that ran the clear_recensus sweep.
+      The checker reports the row UNVERIFIABLE there rather than STALE:
+      it cannot scan a file it does not have, and reading absence as
+      removal would delete a disclosure that is live wherever the data
+      is. COST TO THE GATE: on a clone nothing would stop a new
+      quarantined read being added to this probe unnoticed. Track the
+      probe under docs/receipts/ to close that, and lower
+      max_unverifiable_sites.
 
   - site: "runs/clear_recensus/contra/probe_stage_bytes.py::BOSS_DEFEATED::0x003B"
     disposition: MEASUREMENT_INSTRUMENT
@@ -409,6 +439,9 @@ sites:
     no_witness: Not applicable — see the $0030 row.
     earns_it: n/a
     behaviour: UNCHANGED
+    absent_when: >-
+      Same basis as the sibling row in this probe: git-ignored `runs/`,
+      never force-added, present only on the machine that ran the sweep.
 
   - site: "runs/clear_recensus/contra/probe_live_stage_bytes.py::CURRENT_LEVEL::0x0030"
     disposition: MEASUREMENT_INSTRUMENT
@@ -418,6 +451,9 @@ sites:
     no_witness: Not applicable — see the banked-corpus probe's rows.
     earns_it: n/a
     behaviour: UNCHANGED
+    absent_when: >-
+      Same basis as the sibling row in this probe: git-ignored `runs/`,
+      never force-added, present only on the machine that ran the sweep.
 
   - site: "runs/clear_recensus/contra/probe_live_stage_bytes.py::BOSS_DEFEATED::0x003B"
     disposition: MEASUREMENT_INSTRUMENT
@@ -425,3 +461,6 @@ sites:
     no_witness: Not applicable — see the $0030 row.
     earns_it: n/a
     behaviour: UNCHANGED
+    absent_when: >-
+      Same basis as the sibling row in this probe: git-ignored `runs/`,
+      never force-added, present only on the machine that ran the sweep.
