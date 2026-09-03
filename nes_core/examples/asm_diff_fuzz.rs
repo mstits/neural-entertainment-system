@@ -41,11 +41,13 @@
 //! Designed for a ~24h stamina run via the shell (`for`, or the
 //! harness loops infinitely with --forever).
 
-#![cfg(all(target_arch = "aarch64", feature = "asm_cpu"))]
-
+#[cfg(all(target_arch = "aarch64", feature = "asm_cpu"))]
 use nes_core::cartridge::Cartridge;
+#[cfg(all(target_arch = "aarch64", feature = "asm_cpu"))]
 use nes_core::cpu_asm::{install_opcode_table, nes_cpu_run_block, AsmCpuState};
+#[cfg(all(target_arch = "aarch64", feature = "asm_cpu"))]
 use nes_core::nes::Nes;
+#[cfg(all(target_arch = "aarch64", feature = "asm_cpu"))]
 use nes_core::sink::{AudioSink, VideoSink};
 
 /// How a generated opcode's operand bytes are produced. The 6502
@@ -55,6 +57,7 @@ use nes_core::sink::{AudioSink, VideoSink};
 /// to the 2 KB internal RAM (< $2000). Indexed modes therefore clamp
 /// their base address so `base + index` (index ∈ 0..=255) can never
 /// reach the $2000-$7FFF MMIO window.
+#[cfg(all(target_arch = "aarch64", feature = "asm_cpu"))]
 #[derive(Clone, Copy)]
 enum Gen {
     /// `n` fully-random operand bytes: immediate, zp load, implied,
@@ -82,6 +85,7 @@ enum Gen {
 /// The full fuzzable opcode set. The indexed entries are the ones the
 /// prior audit flagged as untested — abs,X $1D/3D/5D/7D/9D/BD/DD/FD,
 /// abs,Y $19/39/59/79/99/B9/D9/F9, and (zp),Y $11/31/51/71/91/B1/D1/F1.
+#[cfg(all(target_arch = "aarch64", feature = "asm_cpu"))]
 const FUZZABLE_OPCODES: &[(u8, Gen)] = &[
     // ---- immediate / zp load / implied / accumulator / stack ----
     (0xA9, Gen::Simple(1)), // LDA #imm
@@ -161,12 +165,16 @@ const FUZZABLE_OPCODES: &[(u8, Gen)] = &[
 /// 8 little-endian pointers at $F0/$F1, $F2/$F3, … $FE/$FF. No store
 /// the fuzzer generates is allowed to write this region, so pointers
 /// stay valid (and in-RAM) for the whole stream.
+#[cfg(all(target_arch = "aarch64", feature = "asm_cpu"))]
 const POINTER_BASE: usize = 0xF0;
+#[cfg(all(target_arch = "aarch64", feature = "asm_cpu"))]
 const POINTER_SLOTS: usize = 8;
 
+#[cfg(all(target_arch = "aarch64", feature = "asm_cpu"))]
 struct XorShift64 {
     s: u64,
 }
+#[cfg(all(target_arch = "aarch64", feature = "asm_cpu"))]
 impl XorShift64 {
     fn new(seed: u64) -> Self {
         Self { s: seed.max(1) }
@@ -187,17 +195,21 @@ impl XorShift64 {
     }
 }
 
+#[cfg(all(target_arch = "aarch64", feature = "asm_cpu"))]
 struct DiscardSinks;
+#[cfg(all(target_arch = "aarch64", feature = "asm_cpu"))]
 impl VideoSink for DiscardSinks {
     fn write_frame(&mut self, _: &[u8]) {}
     fn frame_written(&self) -> bool { false }
     fn pixel_size(&self) -> usize { 4 }
 }
+#[cfg(all(target_arch = "aarch64", feature = "asm_cpu"))]
 impl AudioSink for DiscardSinks {
     fn write_sample(&mut self, _: f32) {}
     fn samples_written(&self) -> usize { 0 }
 }
 
+#[cfg(all(target_arch = "aarch64", feature = "asm_cpu"))]
 #[derive(Debug, PartialEq, Eq)]
 struct Snapshot {
     pc: u16,
@@ -213,6 +225,7 @@ struct Snapshot {
 /// Fast 64-bit FNV-1a hash of the 2KB NES RAM — cheaper than comparing
 /// 2,048 bytes on every iteration; divergences land a hash mismatch
 /// and then we report the full offending bytes separately if needed.
+#[cfg(all(target_arch = "aarch64", feature = "asm_cpu"))]
 fn ram_hash(ram: &[u8]) -> u64 {
     let mut h: u64 = 0xcbf29ce484222325;
     for &b in ram {
@@ -222,6 +235,7 @@ fn ram_hash(ram: &[u8]) -> u64 {
     h
 }
 
+#[cfg(all(target_arch = "aarch64", feature = "asm_cpu"))]
 struct FuzzCase {
     code: Vec<u8>,        // bytes starting at $C000
     opcodes: Vec<u8>,     // opcode byte of each generated instruction, in order
@@ -239,8 +253,10 @@ struct FuzzCase {
 /// page-cross cycle bug in these handlers is outstanding, so a stamina
 /// run can keep hunting the rest of the opcode space instead of aborting
 /// on the first divergence.
+#[cfg(all(target_arch = "aarch64", feature = "asm_cpu"))]
 const ADC_SBC_INDEXED: [u8; 6] = [0x7D, 0x79, 0x71, 0xFD, 0xF9, 0xF1];
 
+#[cfg(all(target_arch = "aarch64", feature = "asm_cpu"))]
 fn generate_case(rng: &mut XorShift64, opcode_set: &[(u8, Gen)], instrs: usize) -> FuzzCase {
     let mut code = Vec::with_capacity(instrs * 3);
     let mut opcodes = Vec::with_capacity(instrs);
@@ -311,6 +327,7 @@ fn generate_case(rng: &mut XorShift64, opcode_set: &[(u8, Gen)], instrs: usize) 
     }
 }
 
+#[cfg(all(target_arch = "aarch64", feature = "asm_cpu"))]
 fn build_rom(code: &[u8]) -> Vec<u8> {
     let mut rom = Vec::with_capacity(16 + 32 * 1024);
     rom.extend_from_slice(b"NES\x1a");
@@ -330,6 +347,7 @@ fn build_rom(code: &[u8]) -> Vec<u8> {
     rom
 }
 
+#[cfg(all(target_arch = "aarch64", feature = "asm_cpu"))]
 fn build_prg(code: &[u8]) -> Vec<u8> {
     let mut prg = vec![0u8; 32 * 1024];
     prg[0x4000..0x4000 + code.len()].copy_from_slice(code);
@@ -340,6 +358,7 @@ fn build_prg(code: &[u8]) -> Vec<u8> {
 }
 
 /// Where a per-instruction comparison first disagreed.
+#[cfg(all(target_arch = "aarch64", feature = "asm_cpu"))]
 struct Divergence {
     index: usize,
     opcode: u8,
@@ -350,6 +369,7 @@ struct Divergence {
 /// Single-step both cores one instruction at a time, comparing the full
 /// snapshot (registers, flags, RAM, AND the absolute cycle counter)
 /// after each instruction. Returns the first divergence, or `None`.
+#[cfg(all(target_arch = "aarch64", feature = "asm_cpu"))]
 fn run_case(case: &FuzzCase) -> Option<Divergence> {
     // ---- Rust reference: instruction-driven, one CPU cycle per tick. ----
     let rom = build_rom(&case.code);
@@ -443,6 +463,7 @@ fn run_case(case: &FuzzCase) -> Option<Divergence> {
     None
 }
 
+#[cfg(all(target_arch = "aarch64", feature = "asm_cpu"))]
 fn main() {
     let mut args = std::env::args().skip(1);
     let iterations: usize = args
