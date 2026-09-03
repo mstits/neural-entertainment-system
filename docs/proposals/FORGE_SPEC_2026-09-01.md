@@ -77,8 +77,10 @@ defect (`src/training/wall_taxonomy.py:8-34,444-453`).
 ## 2. Architecture — the six pieces
 
 New code lives in `src/forge/` (pure functions, importable by tests the way
-`tests/test_anti_vacuity_gates.py` imports real gate functions) with one CLI,
-`scripts/forge.py {stall,bundle,select,cycle,block} [--dry-run]`. Receipts go to
+`tests/test_anti_vacuity_gates.py` imports real gate functions). No CLI ships with
+this revision: `scripts/forge.py` is unwritten, and every piece is reached only as a
+library import or through the engine's `--forge` hook (`scripts/engine_driver.py`).
+Receipts go to
 `runs/forge/<wall_id>/<cycle_id>/`; the engine-facing verdict stream is
 `runs/engine/stall_receipts.jsonl`, sibling of `proposed_claims.jsonl`
 (`scripts/engine_driver.py:60`). Nothing writes `CLAIMS.md` except the build's own commit

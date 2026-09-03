@@ -47,6 +47,62 @@ def _build_key_blind_archive() -> dict:
     return cells
 
 
+def _build_axis_blind_low_count_archive() -> dict:
+    """Cell-key fixture (arity 8) with five constant axes (positions
+    0,1,2,3,6) and zero live non-spatial, non-bookkeeping axes --
+    `interaction_blind` is True but the constant-axis count is one
+    short of `CONSTANT_AXES_MIN` (6)."""
+    cells: dict[tuple, None] = {}
+    for i in range(50):
+        key = (0, 0, 0, 0, i % 3, i % 4, 0, i % 20)
+        cells[key] = None
+    return cells
+
+
+def _build_axis_not_blind_archive() -> dict:
+    """Cell-key fixture (arity 11) with six constant axes (positions
+    0,1,2,3,6,9) -- clearing `CONSTANT_AXES_MIN` -- but two live,
+    non-spatial, non-bookkeeping axes (7,8), so `interaction_blind`
+    reads False."""
+    cells: dict[tuple, None] = {}
+    for i in range(50):
+        key = (0, 0, 0, 0, i % 3, i % 4, 0, i % 2, (i // 10) % 2, 0, i % 20)
+        cells[key] = None
+    return cells
+
+
+def _axis_blind_low_count_fixture(repo: Path) -> None:
+    member_dir = repo / "member_low_count"
+    member_dir.mkdir(parents=True, exist_ok=True)
+    with open(member_dir / "archive.pkl", "wb") as f:
+        pickle.dump(_build_axis_blind_low_count_archive(), f)
+    (member_dir / "progress.jsonl").write_text(
+        json.dumps({"elapsed_s": 60, "cells": 50, "steps": 1000,
+                    "stall_flat_windows": 0}) + "\n")
+    _write_manifest(repo, "axis_blind_low_count_fixture", {
+        "wall_id": "axis_blind_low_count_fixture", "prior_best": 100,
+        "prior_best_replay_verified": False,
+        "missing": [],
+        "members": [{"dir": "member_low_count", "shape": "progress"}],
+    })
+
+
+def _axis_not_blind_fixture(repo: Path) -> None:
+    member_dir = repo / "member_not_blind"
+    member_dir.mkdir(parents=True, exist_ok=True)
+    with open(member_dir / "archive.pkl", "wb") as f:
+        pickle.dump(_build_axis_not_blind_archive(), f)
+    (member_dir / "progress.jsonl").write_text(
+        json.dumps({"elapsed_s": 60, "cells": 50, "steps": 1000,
+                    "stall_flat_windows": 0}) + "\n")
+    _write_manifest(repo, "axis_not_blind_fixture", {
+        "wall_id": "axis_not_blind_fixture", "prior_best": 100,
+        "prior_best_replay_verified": False,
+        "missing": [],
+        "members": [{"dir": "member_not_blind", "shape": "progress"}],
+    })
+
+
 def _cv_hall_fixture(repo: Path) -> None:
     member_dir = repo / "member_a"
     member_dir.mkdir(parents=True, exist_ok=True)
@@ -150,6 +206,60 @@ def test_bundle_cv_hall_reports_key_blind_from_receipt(tmp_path):
          "receipt": "docs/proposals/gate_opener_arm_2026-08-11.md:139-215"}]
     assert bundle["ram_observables"] == {"certainty": "not_probed", "data": None}
     assert "replay_verified_frontier: fixture gap" in bundle["missing"]
+
+
+def test_bundle_low_constant_count_yields_unknown_not_key_blind(tmp_path):
+    """Five constant axes (one short of `CONSTANT_AXES_MIN`) with
+    `interaction_blind` True must NOT read KEY_BLIND -- mechanism_class
+    reads `[UNKNOWN candidate]` citing the wall's own manifest path.
+    Proves the `len(constant_axes) >= CONSTANT_AXES_MIN` conjunct in
+    `_classify_key_blind` is load-bearing: the existing cv_hall test's
+    own docstring already notes that dropping this conjunct while
+    leaving `interaction_blind` alone still passes on ITS fixture; this
+    fixture is built so that is no longer true anywhere in the suite.
+
+    Revert-verify: in `_classify_key_blind`, drop the
+    `len(constant_axes) >= CONSTANT_AXES_MIN` clause so only
+    `interaction_blind` gates the class -- mechanism_class flips to
+    KEY_BLIND on this fixture and the assertion below fails.
+    """
+    _axis_blind_low_count_fixture(tmp_path)
+    verdict = {"verdict": "STALLED", "kind": "campaign",
+               "wall_id": "axis_blind_low_count_fixture", "missing": []}
+    bundle = build_bundle("axis_blind_low_count_fixture", verdict, repo=tmp_path)
+
+    assert bundle["frontier_shape"]["certainty"] == "confirmed_by_receipt"
+    assert bundle["frontier_shape"]["data"]["constant_axes"] == [0, 1, 2, 3, 6]
+    assert bundle["frontier_shape"]["data"]["interaction_blind"] is True
+    assert bundle["mechanism_class"] == [
+        {"class": "UNKNOWN", "certainty": "candidate",
+         "receipt": "runs/forge/walls/axis_blind_low_count_fixture.json"}]
+
+
+def test_bundle_not_interaction_blind_yields_unknown_not_key_blind(tmp_path):
+    """Six constant axes clears `CONSTANT_AXES_MIN`, but two live
+    non-spatial, non-bookkeeping axes make `interaction_blind` False --
+    mechanism_class must read `[UNKNOWN candidate]` citing the wall's
+    own manifest path, never KEY_BLIND. Proves the `interaction_blind`
+    conjunct in `_classify_key_blind` is independently load-bearing
+    (the axis count alone is not sufficient).
+
+    Revert-verify: in `_classify_key_blind`, drop the
+    `interaction_blind` conjunct so only the axis count gates the class
+    -- mechanism_class flips to KEY_BLIND on this fixture and the
+    assertion below fails.
+    """
+    _axis_not_blind_fixture(tmp_path)
+    verdict = {"verdict": "STALLED", "kind": "campaign",
+               "wall_id": "axis_not_blind_fixture", "missing": []}
+    bundle = build_bundle("axis_not_blind_fixture", verdict, repo=tmp_path)
+
+    assert bundle["frontier_shape"]["certainty"] == "confirmed_by_receipt"
+    assert bundle["frontier_shape"]["data"]["constant_axes"] == [0, 1, 2, 3, 6, 9]
+    assert bundle["frontier_shape"]["data"]["interaction_blind"] is False
+    assert bundle["mechanism_class"] == [
+        {"class": "UNKNOWN", "certainty": "candidate",
+         "receipt": "runs/forge/walls/axis_not_blind_fixture.json"}]
 
 
 def test_bundle_contra_from_receipts_only_yields_two_classes(tmp_path):

@@ -53,6 +53,29 @@ def test_every_registered_arm_has_activity_counter_or_is_unarmable():
     assert audit_violations((ARMS[0], fixed, ARMS[2])) == []
 
 
+def test_is_auditable_requires_armed_signal_not_only_a_counter():
+    """`is_auditable` reads AUDITABLE only when both `armed_signal` and
+    `activity_counter` are set. Against the shipped ARMS this has no
+    witness -- ortho carries both, lock and gate_opener carry neither
+    (lock's `armed_signal` is set but its `activity_counter` is None,
+    which alone already fails the check) -- so a regression that drops
+    the `armed_signal` half of the conjunct (`have_both =
+    bool(arm.activity_counter)`) leaves every ARMS verdict unchanged.
+    This fixture supplies the missing case: a counter with no
+    armed_signal.
+
+    Revert-verify: change `is_auditable` to `bool(arm.activity_counter)`
+    alone -- this fails (reads AUDITABLE, not UNAUDITABLE).
+    """
+    counter_no_signal = dataclasses.replace(
+        ARMS[0], armed_signal=None, activity_counter="ortho_selections")
+    assert is_auditable(counter_no_signal) == "UNAUDITABLE"
+
+    signal_no_counter = dataclasses.replace(
+        ARMS[0], armed_signal="ortho_armed()", activity_counter=None)
+    assert is_auditable(signal_no_counter) == "UNAUDITABLE"
+
+
 # --------------------------------------------------------------- select
 
 def test_select_returns_index_in_range_only():

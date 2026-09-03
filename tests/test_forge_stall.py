@@ -78,6 +78,41 @@ def test_archive_verdict_stalled_at_threshold():
     assert v["evidence"]["steps"] >= 250_000
 
 
+def test_archive_verdict_watching_when_windows_clear_but_effort_short():
+    """12 flat windows (clears FROZEN_WINDOWS_MAX) but cumulative steps
+    stay under EFFORT_MIN_STEPS -> WATCHING, not STALLED. Pins the second
+    conjunct in archive_verdict's STALLED test as load-bearing on its own.
+
+    Revert-verify: drop the `and steps >= effort_min_steps` conjunct from
+    archive_verdict (STALLED on flat_windows alone) and this fails --
+    with 12 flat windows and steps well under the effort floor it would
+    read STALLED instead of WATCHING.
+    """
+    tail = [{"cells": 500, "steps": 100}]
+    for i in range(12):
+        tail.append({"cells": 500, "steps": 100 + (i + 1) * 2_000})
+    v = archive_verdict(tail, wall_id="w")
+    assert v["evidence"]["flat_windows"] == 12
+    assert v["evidence"]["steps"] < 250_000
+    assert v["verdict"] == "WATCHING"
+    assert v["evidence"]["steps"] == tail[-1]["steps"]
+
+
+def test_archive_verdict_watching_at_two_flat_windows():
+    """A short tail -- one baseline row plus 2 flat rows -- clears the
+    WATCHING floor (flat_windows>=2) without going near STALLED's
+    thresholds.
+
+    Revert-verify: change the `>=` on the WATCHING branch's flat_windows
+    check to `>` and this fails -- 2 flat windows would then read
+    ADVANCING instead of WATCHING at exactly the threshold this test pins.
+    """
+    tail = [{"cells": 10, "steps": 5}, {"cells": 10, "steps": 6}, {"cells": 10, "steps": 7}]
+    v = archive_verdict(tail, wall_id="w")
+    assert v["evidence"]["flat_windows"] == 2
+    assert v["verdict"] == "WATCHING"
+
+
 @requires(CV_HALL_TAIL)
 def test_archive_verdict_advancing_on_real_cv_hall_tail():
     """The real last 5 rows of runs/cv_hall_ortho_ctrl/progress.jsonl --
@@ -227,6 +262,88 @@ def test_campaign_advancing_when_one_member_beats_prior(tmp_path):
     assert v["evidence"]["advances"] == 1
 
 
+def test_campaign_watching_below_min_terminal(tmp_path):
+    """Two terminal (no-advance) progress members, no advances --
+    terminal_runs:2 sits under MIN_TERMINAL (3), so the wall reads
+    WATCHING, not STALLED.
+
+    Revert-verify: change MIN_TERMINAL in stall.py from 3 to 2 and this
+    fails -- two terminal members would then clear the (lowered)
+    threshold and the wall reads STALLED instead.
+    """
+    roots = b'{"root": "entrance_after_2.state"}'
+    for name in ("m1", "m2"):
+        _write_progress_member(tmp_path / name, cells=131561, solutions=0,
+                                steps=8_000_000, best_score=767,
+                                roots_bytes=roots)
+    manifest = {
+        "wall_id": "fixture_watching", "prior_best": 767,
+        "prior_best_replay_verified": True,
+        "members": [{"dir": n, "shape": "progress"} for n in ("m1", "m2")],
+    }
+    v = campaign_verdict(manifest, repo=tmp_path)
+    assert v["verdict"] == "WATCHING"
+    assert v["evidence"]["terminal_runs"] == 2
+    assert v["evidence"]["advances"] == 0
+
+
+def test_campaign_not_degraded_when_fully_measured_and_replay_verified(tmp_path):
+    """A family with prior_best_replay_verified True and every member
+    parsed (none unmeasured) must read degraded:False -- the only prior
+    coverage of `degraded` pinned it True (both existing assertions),
+    so the False side of the flag was never proven reachable.
+
+    Revert-verify: hardcode `degraded = True` in campaign_verdict (in
+    place of the `(not prior_best_replay_verified) or
+    bool(members_unmeasured)` expression) and this fails.
+    """
+    roots = b'{"root": "entrance_after_2.state"}'
+    for name in ("m1", "m2", "m3"):
+        _write_progress_member(tmp_path / name, cells=131561, solutions=0,
+                                steps=8_000_000, best_score=767,
+                                roots_bytes=roots)
+    manifest = {
+        "wall_id": "fixture_not_degraded", "prior_best": 767,
+        "prior_best_replay_verified": True,
+        "members": [{"dir": n, "shape": "progress"} for n in ("m1", "m2", "m3")],
+    }
+    v = campaign_verdict(manifest, repo=tmp_path)
+    assert v["verdict"] == "STALLED"
+    assert v["evidence"]["members_unmeasured"] == []
+    assert v["degraded"] is False
+
+
+def test_campaign_unreadable_member_drops_to_missing_not_terminal(tmp_path):
+    """A manifest member whose directory has no progress.jsonl (the
+    spec's PASS/FAIL/VOID table for this piece, FORGE_SPEC_2026-09-01.md
+    row (a): "A member's files unreadable -> member in `missing`; if
+    that drops a wall below MIN_TERMINAL the row is VOID (reported), not
+    FAIL") is recorded in `missing`, counted as neither terminal nor
+    advancing, and -- with only 2 of what would otherwise be 3 terminal
+    members -- drops the wall from what would be STALLED to WATCHING.
+
+    Revert-verify: in campaign_verdict, replace the unreadable-member
+    `continue` with `terminal_runs += 1` (treat an unreadable member as
+    terminal instead of dropping it) and this fails -- terminal_runs
+    becomes 3 and the wall reads STALLED.
+    """
+    roots = b'{"root": "entrance_after_2.state"}'
+    for name in ("m1", "m2"):
+        _write_progress_member(tmp_path / name, cells=131561, solutions=0,
+                                steps=8_000_000, best_score=767,
+                                roots_bytes=roots)
+    manifest = {
+        "wall_id": "fixture_missing_member", "prior_best": 767,
+        "prior_best_replay_verified": True,
+        "members": [{"dir": n, "shape": "progress"} for n in ("m1", "m2", "ghost")],
+    }
+    v = campaign_verdict(manifest, repo=tmp_path)
+    assert v["verdict"] == "WATCHING"
+    assert v["evidence"]["terminal_runs"] == 2
+    assert v["evidence"]["advances"] == 0
+    assert any(entry.startswith("ghost: unreadable") for entry in v["missing"])
+
+
 @requires(*WALL_MEMBER_DATA)
 def test_campaign_verdict_matches_real_cv_hall_and_contra_wall_manifests():
     """The two manifests the build lands (runs/forge/walls/{cv_hall,
@@ -316,3 +433,70 @@ def test_engine_journal_byte_identical_without_forge_flag(tmp_path, monkeypatch)
     assert journal_bytes == expected
     assert not ed.STALL_RECEIPTS.exists()
     assert "stalled_notified" not in state
+
+
+def test_stall_check_survives_malformed_manifest(tmp_path, monkeypatch):
+    """A malformed wall manifest (missing "wall_id", which campaign_verdict
+    reads unconditionally with `manifest["wall_id"]`) must not stop the
+    engine. stall_check's own try/except covers only json.loads(); the
+    wall_id lookup and campaign_verdict() call for each manifest sat
+    outside it, so a bad manifest under runs/forge/walls/ raised straight
+    through stall_check -> tick() -> the while-True loop in main(), which
+    has no try around tick() either.
+
+    A second, well-formed manifest is glob-sorted after the bad one, to
+    prove the bad manifest is skipped rather than aborting the whole scan.
+
+    Revert-verify: move the `try/except Exception` back to wrapping only
+    the campaign_verdict() call's neighbor (i.e. drop the except around
+    campaign_verdict) and this fails with KeyError('wall_id') instead of
+    the tick record and journal row asserted below.
+    """
+    import scripts.engine_driver as ed
+
+    engine_dir = tmp_path / "engine"
+    monkeypatch.setattr(ed, "ENGINE_DIR", engine_dir)
+    monkeypatch.setattr(ed, "JOURNAL", engine_dir / "journal.jsonl")
+    monkeypatch.setattr(ed, "STATE_PATH", engine_dir / "state.json")
+    monkeypatch.setattr(ed, "STALL_RECEIPTS", engine_dir / "stall_receipts.jsonl")
+    monkeypatch.setattr(ed, "plan", lambda state, repo=ed.REPO, emulator_only=None: None)
+    monkeypatch.setattr(ed.time, "time", lambda: 1735689600.0)
+
+    walls_dir = tmp_path / "runs" / "forge" / "walls"
+    walls_dir.mkdir(parents=True)
+
+    # Malformed: no "wall_id" key. campaign_verdict does manifest["wall_id"]
+    # unconditionally (stall.py:235) -- KeyError, not a parse failure
+    # json.loads would ever raise.
+    (walls_dir / "bad_wall.json").write_text(json.dumps(
+        {"prior_best": 100, "members": []}))
+
+    # Well-formed, sorts after "bad_wall.json", proves the scan continues.
+    _write_receipt_member(tmp_path / "beats", "r.json", {"score": 800})
+    (walls_dir / "good_wall.json").write_text(json.dumps({
+        "wall_id": "fixture_good", "prior_best": 767,
+        "prior_best_replay_verified": True,
+        "members": [
+            {"dir": "beats", "shape": "receipt", "receipt": "r.json",
+             "terminal_field": None, "best_field": "score",
+             "root_family": "x"},
+        ],
+    }))
+
+    state = {"attempts": {}, "consecutive_failures": 0, "halted": None,
+             "running": None, "completed": {}}
+
+    rec = ed.tick(state, repo=tmp_path, dry=True, forge=True)
+
+    assert rec["decision"] == "idle"
+
+    lines = [json.loads(line) for line in ed.JOURNAL.read_text().splitlines()]
+    skip_rows = [r for r in lines if r.get("type") == "stall_check_error"]
+    assert len(skip_rows) == 1
+    assert skip_rows[0]["manifest"].endswith("bad_wall.json")
+
+    # The well-formed manifest after it was still scanned: ADVANCING
+    # verdicts never latch stalled_notified, but a wrong per-manifest
+    # exception guard would have stopped the loop before reaching it,
+    # and the journal would carry no trace it was ever read.
+    assert "fixture_good" not in state.get("stalled_notified", {})

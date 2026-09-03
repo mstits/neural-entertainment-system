@@ -1316,9 +1316,18 @@ def stall_check(state: dict, repo: Path = REPO) -> None:
     tick. The verdict is also appended to STALL_RECEIPTS, sibling of
     PROPOSED. Import of src.forge.stall is local: the Forge is optional
     machinery, off by default, and this function is only ever called
-    behind --forge.
+    behind --forge. The import and the per-manifest campaign_verdict()
+    call are both guarded: a manifest missing a required key (wall_id,
+    prior_best, members, dir, shape, receipt) or naming an unknown
+    member shape raises KeyError/ValueError out of campaign_verdict, and
+    that must cost this one wall its verdict for this tick, not stop the
+    engine -- tick()'s caller has no try around it.
     """
-    from src.forge.stall import campaign_verdict
+    try:
+        from src.forge.stall import campaign_verdict
+    except Exception as e:
+        journal({"type": "stall_check_error", "error": f"import failed: {e}"})
+        return
 
     walls_dir = repo / "runs" / "forge" / "walls"
     if not walls_dir.exists():
@@ -1330,7 +1339,12 @@ def stall_check(state: dict, repo: Path = REPO) -> None:
         except (OSError, json.JSONDecodeError):
             continue
         wall_id = manifest.get("wall_id", manifest_path.stem)
-        verdict = campaign_verdict(manifest, repo)
+        try:
+            verdict = campaign_verdict(manifest, repo)
+        except Exception as e:
+            journal({"type": "stall_check_error", "wall_id": wall_id,
+                     "manifest": str(manifest_path), "error": str(e)})
+            continue
         if verdict["verdict"] == "STALLED":
             if not notified.get(wall_id):
                 notified[wall_id] = True
