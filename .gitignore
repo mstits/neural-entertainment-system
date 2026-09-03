@@ -61,12 +61,19 @@ AI_INSTRUCTIONS.md
 .archive/
 docs/session_recap_*.md
 
-# NES ROMs are user-supplied. Never ship a ROM.
-roms/
+# NES ROMs are user-supplied. Never ship a commercial ROM.
+#
+# Keep this as `roms/*`, not `roms/`. Git does not descend into an excluded
+# directory, so excluding `roms/` makes every negation below unreachable and
+# the nestest artifacts silently fail to ship. Excluding the entries instead
+# leaves the directory walkable, so a negation can re-include one child.
+# Check with: git check-ignore -v roms/.test_roms/nestest.nes   (must not match)
+roms/*
 
-# Public-domain CPU validation artifacts (kevtris nestest + Nintendulator
-# golden trace). Explicitly tracked despite the roms/ + *.log globs above so
-# the nestest test runs on fresh clones without a download step.
+# Homebrew CPU validation artifacts (kevtris's nestest and its Nintendulator
+# golden trace), tracked despite the roms/* and *.log globs above so the
+# nestest gate runs on a fresh clone with no download step. Provenance and
+# redistribution terms: roms/.test_roms/PROVENANCE.md.
 !roms/.test_roms/
 !roms/.test_roms/*
 

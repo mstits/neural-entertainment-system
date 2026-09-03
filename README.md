@@ -1146,8 +1146,11 @@ make selftest    # GUI widget construction, headless (offscreen Qt)
 make parity      # 149 nes_core-vs-nes-py/Mesen differential tests (< 2 min)
 make pool-test   # Rust pool/spectator tests behind --features python
 
-# Rust (includes nestest CPU validation: 8,991 instructions byte-exact)
-cd nes_core && cargo test --all-features
+# Rust CPU gate: nestest, 8,991 instructions byte-exact. Not
+# --all-features, which turns on the PyO3 `python` feature and aborts the
+# lib test binary in dyld ('_PyExc_BaseException') at rc=101 before this
+# gate is reached.
+cd nes_core && cargo test --features asm_cpu --test nestest_validation
 
 # Library-wide sweeps (~3 min each; require ROMs in roms/)
 python scripts/playability_sweep.py    # boots but doesn't progress
@@ -1361,5 +1364,7 @@ their code ships in this repo, but the lineage is real and worth naming.
   Mesen-oracle lockstep are the current CPU gates.
 - **kevtris's nestest** + the **Nintendulator golden trace**: drive the
   byte-exact CPU validation harness (8,991 instructions, every official +
-  undocumented opcode). These are the only third-party ROMs distributed with the
-  project (`roms/.test_roms/`, public domain).
+  undocumented opcode). These are the only third-party ROM artifacts
+  distributed with the project, and they are tracked so the gate runs on a
+  fresh clone. Neither carries an explicit licence; the redistribution basis
+  is stated in full at `roms/.test_roms/PROVENANCE.md`.

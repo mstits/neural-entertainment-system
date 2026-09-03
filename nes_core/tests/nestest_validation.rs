@@ -37,6 +37,12 @@ use std::io::{BufRead, BufReader};
 /// `strip_apu_annotation` for rationale).
 const FULL_LOG_LINES: usize = usize::MAX;
 
+/// Line count of the tracked `roms/.test_roms/nestest.log`, and the number
+/// the README's testing table quotes. Asserted below: without it, a truncated
+/// or substituted golden trace would let this gate report a green having
+/// validated fewer instructions than the documentation claims.
+const CANONICAL_LOG_LINES: usize = 8991;
+
 fn read_log_lines(limit: usize) -> Vec<String> {
     let f = File::open("../roms/.test_roms/nestest.log")
         .expect("nestest.log present (../roms/.test_roms/)");
@@ -191,19 +197,28 @@ fn run_nestest_validation(limit: usize, strict: bool) -> Result<usize, String> {
 fn nestest_full_log_matches_canonical_byte_exact() {
     match run_nestest_validation(FULL_LOG_LINES, true) {
         Ok(n) => {
-            eprintln!(
+            assert_eq!(
+                n, CANONICAL_LOG_LINES,
+                "nestest validated {n} instructions, not the {CANONICAL_LOG_LINES} the \
+                README's testing table claims. The golden trace at \
+                roms/.test_roms/nestest.log has been truncated or replaced; restore it \
+                with `git checkout -- roms/.test_roms/nestest.log`, or correct the README \
+                if the new count is deliberate."
+            );
+            println!(
                 "nestest validated: {n} instructions matched canonical log byte-exact \
                 (PC + opcode + asm + A/X/Y/P/SP + CYC)"
             );
         }
         Err(e) => {
-            if e.contains("not present") || e.contains("empty") {
-                eprintln!("skipping: {e}");
-                return;
-            }
-            panic!("CPU regressed: {e}\n\n\
-                If you see a divergence here you broke an opcode. Check the prev-3 lines \
-                in the diff to see which opcode set up the diverging state.");
+            panic!("nestest CPU gate did not run: {e}\n\n\
+                Both nestest.nes and nestest.log are tracked in git and ship in every \
+                clone, so an absent or empty file means a tracked artifact was deleted \
+                locally -- not that it is user-supplied like the rest of roms/. Restore \
+                with `git checkout -- roms/.test_roms/`. See roms/.test_roms/PROVENANCE.md.\n\n\
+                If the message above is a divergence rather than a missing file, you broke \
+                an opcode. Check the prev-3 lines in the diff to see which opcode set up \
+                the diverging state.");
         }
     }
 }

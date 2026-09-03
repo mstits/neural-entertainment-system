@@ -39,8 +39,10 @@ The whole tree is gated by tests. Two levels:
 make test    # pytest, incl. slow real-emulator guards — Python trainer + utils
 make parity  # nes_core vs reference oracle, ~110 s — the fidelity gate
 
-# Rust-side
-cd nes_core && cargo test --all-features
+# Rust-side CPU gate (nestest, 8,991 instructions). Not --all-features:
+# that turns on the PyO3 `python` feature and the lib test binary aborts
+# in dyld at rc=101 before the gate runs.
+cd nes_core && cargo test --features asm_cpu --test nestest_validation
 ```
 
 `make parity` is the gate that catches CPU / PPU / mapper timing
