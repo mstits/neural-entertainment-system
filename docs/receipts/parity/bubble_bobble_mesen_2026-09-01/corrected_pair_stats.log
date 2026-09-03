@@ -1,0 +1,38 @@
+nes_core frames=6964  mesen frames=6966
+
+== mapping mesen_row=i+1: exact frames=1/6964 median=28 p90=39 max=135
+   lives agree 6963/6964  round agree 6960/6964  player x agree 5070/6964  player y agree 3426/6964  enemies-left agree 6955/6964
+   prefix      n=1816 exact=   1 median=  17 p90=  30 max=  80
+   materialize n=   4 exact=   0 median=  14 p90=  17 max=  18
+   round1      n=1292 exact=   0 median=  27 p90=  35 max=  65
+   seam1       n=  36 exact=   0 median=  30 p90=  40 max=  58
+   round2      n=2040 exact=   0 median=  30 p90=  37 max=  98
+   seam2       n=  36 exact=   0 median=  30 p90=  34 max=  49
+   round3      n=1740 exact=   0 median=  35 p90=  44 max= 135
+   first differing frame: nes_core raw_frame=1 n=17 addrs=['0x0', '0x1', '0x2', '0x84', '0x85', '0xf9', '0xfa', '0xfe', '0xff', '0x100', '0x101', '0x1fa', '0x1fb', '0x1fc', '0x1fd', '0x1fe', '0x1ff']
+      nes_core=[40, 38, 170, 255, 223, 255, 46, 6, 48, 192, 128, 223, 195, 107, 193, 1, 233]
+      mesen   =[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+   addresses differing on >90% of frames (2): ['0xda', '0xe4']
+   frames with lives/round disagreement: [(257, 3, 0, 0, 0), (664, 3, 3, 1, 0), (3110, 3, 3, 1, 0), (5184, 3, 3, 2, 1), (6959, 3, 3, 3, 2)]
+   gameplay fork (x/y>4px, enemies-left, or score differ): raw_frame 2028
+
+== mapping mesen_row=i+2: exact frames=414/6964 median=29 p90=52 max=385
+   lives agree 6964/6964  round agree 6958/6964  player x agree 6960/6964  player y agree 6899/6964  enemies-left agree 6959/6964
+   prefix      n=1816 exact= 274 median=  13 p90=  35 max= 350
+   materialize n=   4 exact=   0 median=  26 p90=  29 max=  29
+   round1      n=1292 exact=   0 median=  33 p90=  48 max= 109
+   seam1       n=  36 exact=   5 median=   2 p90=   2 max=   2
+   round2      n=2040 exact=  48 median=  35 p90=  59 max= 383
+   seam2       n=  36 exact=   1 median=   2 p90=   2 max=   2
+   round3      n=1740 exact=  86 median=  29 p90=  58 max= 385
+   first differing frame: nes_core raw_frame=1 n=73 addrs=['0x0', '0x2', '0x84', '0x85', '0xfa', '0x1f8', '0x1f9', '0x1fa', '0x1fc', '0x200', '0x204', '0x208', '0x20c', '0x210', '0x214', '0x218', '0x21c', '0x220', '0x224', '0x228', '0x22c', '0x230', '0x234', '0x238', '0x23c', '0x240', '0x244', '0x248', '0x24c', '0x250', '0x254', '0x258', '0x25c', '0x260', '0x264', '0x268', '0x26c', '0x270', '0x274', '0x278', '0x27c', '0x280', '0x284', '0x288', '0x28c', '0x290', '0x294', '0x298', '0x29c', '0x2a0', '0x2a4', '0x2a8', '0x2ac', '0x2b0', '0x2b4', '0x2b8', '0x2bc', '0x2c0', '0x2c4', '0x2c8', '0x2cc', '0x2d0', '0x2d4', '0x2d8', '0x2dc', '0x2e0', '0x2e4', '0x2e8', '0x2ec', '0x2f0', '0x2f4', '0x2f8', '0x2fc']
+      nes_core=[40, 170, 255, 223, 46, 0, 0, 223, 107, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+      mesen   =[32, 255, 0, 5, 79, 178, 195, 126, 110, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244, 244]
+   addresses differing on >90% of frames (0): []
+   frames with lives/round disagreement: [(3108, 3, 3, 1, 0), (3111, 3, 3, 1, 2), (5182, 3, 3, 2, 1), (5185, 3, 3, 2, 3), (6957, 3, 3, 3, 2), (6960, 3, 3, 3, 4)]
+   gameplay fork (x/y>4px, enemies-left, or score differ): raw_frame 2028
+Traceback (most recent call last):
+  File "<SCRATCH>/corrected_pair_stats.py", line 34, in <module>
+    ms1=m[np.arange(N)+1]; ms2=m[np.arange(N)+2]; ms3=m[np.arange(N)+3]
+                                                      ~^^^^^^^^^^^^^^^^
+IndexError: index 6966 is out of bounds for axis 0 with size 6966

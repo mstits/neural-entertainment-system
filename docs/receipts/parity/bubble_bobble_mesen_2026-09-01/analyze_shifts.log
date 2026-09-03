@@ -1,0 +1,97 @@
+nes_core reference: rows=1287 first raw_frame=1816 last=6960
+
+nes_core reference lives/round transitions (raw_frame after step; action granularity):
+  raw_frame=3108 (3, 1)->(3, 2) [round1]
+  raw_frame=5184 (3, 2)->(3, 3) [round2]
+  raw_frame=6960 (3, 3)->(3, 4) [round3]
+  end: raw_frame=6960 lives=3 round=4
+
+===== Mesen shift=+0: 6960 frames; final lives=0 round=2
+  raw_frame=  273 lives 0->3
+  raw_frame=  680 round 0->1
+  raw_frame= 1399 lives 3->2
+  raw_frame= 3200 round 1->0
+  raw_frame= 3202 round 0->1
+  raw_frame= 3203 round 1->2
+  raw_frame= 3706 lives 2->1
+  raw_frame= 4032 lives 1->0
+  cmp row=F-1+0-3: n=1287 exact=0 median=376 p90=837 max=905 lives_match=0/1287 round_match=817/1287
+  cmp row=F-1+0-2: n=1287 exact=0 median=376 p90=836 max=905 lives_match=0/1287 round_match=817/1287
+  cmp row=F-1+0-1: n=1287 exact=0 median=375 p90=836 max=904 lives_match=0/1287 round_match=818/1287
+  cmp row=F-1+0+0: n=1287 exact=0 median=376 p90=836 max=904 lives_match=0/1287 round_match=818/1287
+  cmp row=F-1+0+1: n=1286 exact=0 median=376 p90=833 max=900 lives_match=0/1286 round_match=818/1286
+  cmp row=F-1+0+2: n=1286 exact=0 median=376 p90=836 max=907 lives_match=0/1286 round_match=818/1286
+  cmp row=F-1+0+3: n=1286 exact=0 median=376 p90=837 max=904 lives_match=0/1286 round_match=819/1286
+  BEST offset s=-1: cmp row=F-1+0-1: n=1287 exact=0 median=375 p90=836 max=904 lives_match=0/1287 round_match=818/1287
+
+===== Mesen shift=+1: 6961 frames; final lives=1 round=3
+  raw_frame=  274 lives 0->3
+  raw_frame=  681 round 0->1
+  raw_frame= 1400 lives 3->2
+  raw_frame= 3109 round 1->0
+  raw_frame= 3111 round 0->1
+  raw_frame= 3112 round 1->2
+  raw_frame= 4591 lives 2->1
+  raw_frame= 5849 round 2->1
+  raw_frame= 5851 round 1->2
+  raw_frame= 5852 round 2->3
+  cmp row=F-1+1-3: n=1287 exact=0 median=268 p90=712 max=865 lives_match=0/1287 round_match=1116/1287
+  cmp row=F-1+1-2: n=1287 exact=0 median=263 p90=708 max=857 lives_match=0/1287 round_match=1116/1287
+  cmp row=F-1+1-1: n=1287 exact=0 median=261 p90=711 max=858 lives_match=0/1287 round_match=1118/1287
+  cmp row=F-1+1+0: n=1287 exact=0 median=263 p90=699 max=860 lives_match=0/1287 round_match=1118/1287
+  cmp row=F-1+1+1: n=1286 exact=0 median=265 p90=712 max=840 lives_match=0/1286 round_match=1118/1286
+  cmp row=F-1+1+2: n=1286 exact=0 median=267 p90=706 max=836 lives_match=0/1286 round_match=1118/1286
+  cmp row=F-1+1+3: n=1286 exact=0 median=268 p90=712 max=837 lives_match=0/1286 round_match=1120/1286
+  BEST offset s=-1: cmp row=F-1+1-1: n=1287 exact=0 median=261 p90=711 max=858 lives_match=0/1287 round_match=1118/1287
+
+===== Mesen shift=+2: 6962 frames; final lives=1 round=2
+  raw_frame=  259 lives 0->3
+  raw_frame=  666 round 0->1
+  raw_frame= 3452 round 1->0
+  raw_frame= 3454 round 0->1
+  raw_frame= 3455 round 1->2
+  raw_frame= 3965 lives 3->2
+  raw_frame= 5072 lives 2->1
+  cmp row=F-1+2-3: n=1287 exact=0 median=308 p90=760 max=819 lives_match=538/1287 round_match=755/1287
+  cmp row=F-1+2-2: n=1287 exact=0 median=308 p90=756 max=820 lives_match=538/1287 round_match=755/1287
+  cmp row=F-1+2-1: n=1287 exact=0 median=307 p90=751 max=816 lives_match=537/1287 round_match=755/1287
+  cmp row=F-1+2+0: n=1287 exact=0 median=304 p90=751 max=819 lives_match=537/1287 round_match=755/1287
+  cmp row=F-1+2+1: n=1286 exact=0 median=307 p90=758 max=813 lives_match=537/1286 round_match=756/1286
+  cmp row=F-1+2+2: n=1286 exact=0 median=307 p90=758 max=810 lives_match=537/1286 round_match=756/1286
+  cmp row=F-1+2+3: n=1286 exact=0 median=304 p90=758 max=814 lives_match=536/1286 round_match=756/1286
+  BEST offset s=+0: cmp row=F-1+2+0: n=1287 exact=0 median=304 p90=751 max=819 lives_match=537/1287 round_match=755/1287
+
+===== Mesen shift=+3: 6963 frames; final lives=0 round=2
+  raw_frame=  260 lives 0->3
+  raw_frame=  667 round 0->1
+  raw_frame= 3200 round 1->0
+  raw_frame= 3202 round 0->1
+  raw_frame= 3203 round 1->2
+  raw_frame= 3711 lives 3->2
+  raw_frame= 4035 lives 2->1
+  raw_frame= 4337 lives 1->0
+  cmp row=F-1+3-3: n=1287 exact=0 median=350 p90=823 max=877 lives_match=474/1287 round_match=818/1287
+  cmp row=F-1+3-2: n=1287 exact=0 median=350 p90=818 max=877 lives_match=474/1287 round_match=818/1287
+  cmp row=F-1+3-1: n=1287 exact=0 median=350 p90=823 max=875 lives_match=474/1287 round_match=818/1287
+  cmp row=F-1+3+0: n=1287 exact=0 median=350 p90=823 max=876 lives_match=473/1287 round_match=819/1287
+  cmp row=F-1+3+1: n=1286 exact=0 median=350 p90=823 max=875 lives_match=473/1286 round_match=819/1286
+  cmp row=F-1+3+2: n=1286 exact=0 median=346 p90=823 max=874 lives_match=473/1286 round_match=819/1286
+  cmp row=F-1+3+3: n=1286 exact=0 median=350 p90=823 max=874 lives_match=473/1286 round_match=819/1286
+  BEST offset s=+2: cmp row=F-1+3+2: n=1286 exact=0 median=346 p90=823 max=874 lives_match=473/1286 round_match=819/1286
+
+===== Mesen shift=-1: 6959 frames; final lives=1 round=2
+  raw_frame=  272 lives 0->3
+  raw_frame=  679 round 0->1
+  raw_frame= 1398 lives 3->2
+  raw_frame= 3449 round 1->0
+  raw_frame= 3451 round 0->1
+  raw_frame= 3452 round 1->2
+  raw_frame= 3951 lives 2->1
+  cmp row=F-1-1-3: n=1287 exact=0 median=318 p90=797 max=842 lives_match=0/1287 round_match=755/1287
+  cmp row=F-1-1-2: n=1287 exact=0 median=318 p90=795 max=843 lives_match=0/1287 round_match=755/1287
+  cmp row=F-1-1-1: n=1287 exact=0 median=315 p90=797 max=839 lives_match=0/1287 round_match=755/1287
+  cmp row=F-1-1+0: n=1287 exact=0 median=316 p90=793 max=844 lives_match=0/1287 round_match=755/1287
+  cmp row=F-1-1+1: n=1286 exact=0 median=320 p90=796 max=827 lives_match=0/1286 round_match=756/1286
+  cmp row=F-1-1+2: n=1286 exact=0 median=320 p90=791 max=824 lives_match=0/1286 round_match=756/1286
+  cmp row=F-1-1+3: n=1286 exact=0 median=319 p90=795 max=824 lives_match=0/1286 round_match=756/1286
+  BEST offset s=-1: cmp row=F-1-1-1: n=1287 exact=0 median=315 p90=797 max=839 lives_match=0/1287 round_match=755/1287

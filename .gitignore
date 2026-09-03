@@ -91,3 +91,8 @@ nes_core/pgo/raw/
 # Local experiment artifacts (archives, handoffs, receipts, demos) — large,
 # regenerable, referenced by path from configs; never committed.
 runs/
+
+# Committed parity receipts. Explicitly tracked despite the *.log glob
+# above, so a public fidelity number and the log it was read off land in
+# the same commit and survive a fresh clone.
+!docs/receipts/**/*.log

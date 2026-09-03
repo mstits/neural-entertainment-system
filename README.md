@@ -66,16 +66,21 @@ and the TAS community: real, rigorous, always labeled as search, and never
 presented as learning.
 
 **One game beaten so far.** Bubble Bobble is the second campaign in flight
-and stands at **round 60** solved and banked
-(`runs/bubble_bobble/chain_day2c/chain.jsonl`); Castlevania is at **blocks
+and stands at **round 98** solved and banked contiguously, with round 99
+split and 99-0 solved, 99-1 (the boss room) open
+(`docs/receipts/bubble_bobble_chain_census_2026-09-02.md`, from
+`runs/bubble_bobble/chain_day2f/chain.jsonl` and
+`runs/bubble_bobble/chain_day2g/chain.jsonl`); Castlevania is at **blocks
 0-2 of ~18**. Those are the honest counts, not forecasts.
 
 ### 2. [LEARNED] World 1-1, cleared at 0.65 under the honest protocol
 
 The learned ledger's headline is one level, and it is measured under the
-research-standard bar: cold power-on, zero test-time state loads, greedy
-action selection, 25% sticky actions, 0–16 frame start jitter, single-life
-scoring, two seeds, greedy *and* sampled both reported (Machado et al. 2018;
+research-standard bar: cold power-on for 1-1 (whose entrance state is
+power-on equivalent), a declared entrance state for every other level, zero
+mid-episode state loads, greedy action selection, 25% sticky actions, 0–16
+frame start jitter, single-life scoring, two seeds, greedy *and* sampled
+both reported (Machado et al. 2018;
 `CLAIMS.md` fixes the episode-count floor at 50 per seed, and every run
 declares the count it used).
 
@@ -105,12 +110,16 @@ per-seed spread is wider, 56–74%, and that is the honest band. B4's two
 rows are evaluated the same way, from
 `checkpoints/mario_1_1_backward/eval.jsonl`.
 
-One gap in the receipts themselves:
+The gap that used to sit in the receipts themselves is closed.
 `eval.jsonl` records the checkpoint, episode count, clear rate, action
-selection, worker count and RNG mode, but **not** `sticky_prob`,
-`start_jitter` or `eval_seed`. The noise settings behind these rows come
-from the run invocation and the write-ups in `docs/research/`, not from the
-receipt file; folding them into the record is an open item.
+selection, worker count and RNG mode, and the protocol too: the requested
+`sticky_prob`, `start_jitter` and `eval_seed` (2026-08-11, `567a3c0`), and
+the measured `sticky_applied`, `sticky_eligible`, `sticky_measured`,
+`jitter_hist`, `max_steps`, `profile`, `rom`, `rom_sha256` and
+`n_episodes_delivered` (2026-08-27, `5629181`;
+`scripts/eval_game.py:331,374`). Rows banked before those dates still take
+their noise settings from the run invocation and the write-ups in
+`docs/research/`, and are readable only next to those.
 
 Two more entries, both carefully qualified:
 
@@ -122,8 +131,7 @@ Two more entries, both carefully qualified:
   1,900+ zones by sequential statistical tests does not compose into
   traversal, and the level's central gauntlet has a measured local noise
   ceiling far below the protocol's 25%. On the literature: **we are aware of no published per-level 1-2 clear rate
-  under Machado sticky-0.25, in either direction**; the level is an open
-  problem at the field's frontier. Full record:
+  under Machado sticky-0.25, in either direction**. Full record:
   `docs/research/RESULTS_1_2_HONEST_PROTOCOL_2026-07-24.md`.
 - **The composite World-1 playthrough** remains reproducible: per-level
   learned nets behind a router, playing 1-1 through the 1-4 castle live
@@ -170,15 +178,17 @@ Neither ledger means anything on an emulator that drifts. The core is gated by
 **nestest byte-exact** (8,991 instructions, registers *and* cycle count,
 against the Nintendulator golden trace), a **33-ROM Mesen-oracle lockstep**,
 **149 differential parity tests** (`make parity`), and a differential fuzz of
-the AArch64 ASM CPU against the pure-Rust interpreter across 240M+ instructions
+the AArch64 ASM CPU against the pure-Rust interpreter across 2.8B+ instructions
 with zero divergence. 793 of 796 library ROMs boot into a live screen
 (2026-09-02 census: two static screens, one truncated dump; receipt
 `docs/receipts/rom_census/mapper105_boot_fix_2026-09-02.md`).
-Cross-checked against Mesen 2 on 12,000 frames of the banked Super Mario Bros
-run (2026-09-01): nes_core and Mesen agree on lives, area, mode and every
-level-transition frame; scratch bytes (stack, zero-page temps, OAM buffer)
-differ by about 10 per frame idle and 17 median under play. The core is never
-claimed byte-identical to Mesen. The honest gap (the full public blargg
+Cross-checked against Mesen 2 under real input on two banked tapes
+(2026-09-01): 12,000 frames of the Super Mario Bros run and 6,964 frames of the
+Bubble Bobble rounds 1-3 chain. On both, nes_core and Mesen agree on lives and
+on every level or round transition frame to within one frame; scratch bytes
+differ by a median of 17 (SMB) and 24 (Bubble Bobble) per frame under a
+one-frame tolerance. The core is
+never claimed byte-identical to Mesen. The honest gap (the full public blargg
 gauntlet is not yet run end-to-end as a gate) is stated in *Accuracy status*
 below.
 
@@ -197,7 +207,7 @@ documented negatives. This is the summary:
 | Ledger | What it covers | What may be said |
 |---|---|---|
 | **EXHIBITION** | *Play.* Search output: Go-Explore and beam solutions, BC "pilot" clones of a single trajectory, routed replay chains. The completed SMB run is here. | "The *search system* solved it." Never "the AI learned it." |
-| **LEARNED** | *Play.* A policy trained by RL and evaluated under the honest protocol: cold power-on, zero test-time state loads, single-life denominators, sticky-actions 0.25 + start-jitter 16, at least 50 episodes on each of two seeds, greedy **and** sampled both declared, action receipts recorded and self-replay verified. | "The agent learned/plays/beat." Only here. |
+| **LEARNED** | *Play.* A policy trained by RL and evaluated under the honest protocol: cold power-on for 1-1 (whose entrance state is power-on equivalent), a declared entrance state for every other level, zero mid-episode state loads, single-life denominators, sticky-actions 0.25 + start-jitter 16, at least 50 episodes on each of two seeds, greedy **and** sampled both declared, action receipts recorded and self-replay verified. | "The agent learned/plays/beat." Only here. |
 | **FORGE** | *Machinery, not play.* The system diagnosed its own wall from its own self-measured telemetry and forged a new mechanism: agent-authored, shipped default-off and byte-identical, carrying a stated validation gate and an honest record of whether that gate has been met. | Approved verbs: **diagnosed, forged, built, extended itself**. *learn / learned / learns / learning / self-taught* are **banned** for FORGE-class results, whatever the arm goes on to do. |
 
 FORGE deliberately claims less than it looks like it does: it carries no
@@ -429,10 +439,12 @@ $$\min_{w,b}\; \frac{1}{N}\sum_{j=1}^{N} \ln\!\left(1+e^{-Y_j (w^\top \Phi(R_j)+
 ### The honest evaluation protocol and the learned ledger (LEARNED)
 
 Learned policies are judged by the protocol of Machado et al. [1]: cold
-power-on, zero test-time state loads, greedy action selection, 25%
-sticky actions, 0–16 frame start jitter, single-life scoring, two seeds, and
-greedy and sampled both declared (`CLAIMS.md` sets the episode floor; every
-run declares the count it used). Under this bar, **1-1 is learned at 0.65
+power-on for 1-1 (whose entrance state is power-on equivalent), a declared
+entrance state for every other level, zero mid-episode state loads, greedy
+action selection, 25% sticky actions, 0–16 frame start jitter, single-life
+scoring, two seeds, and greedy and sampled both declared (`CLAIMS.md` sets
+the episode floor; every run declares the count it used). Under this bar,
+**1-1 is learned at 0.65
 pooled** (0.56 / 0.74 per seed, 50 episodes each) by from-scratch PPO [12, 13]
 on tile observations. **1-2 is a documented negative** with the same
 evidentiary standard: a pre-registered three-seed campaign showed the CGSA-PPO
@@ -527,8 +539,8 @@ deterministic core. Artifacts: `docs/receipts/full_run/`.
   A hand-written
   **AArch64-assembly 6502 core** (`nes_core/src/cpu_asm.s`) rides on top as an
   Apple-Silicon *performance* path, enabled in the maturin/Makefile build,
-  differential-fuzzed against the interpreter for 240M+ instructions with zero
-  divergence, and falling back to the interpreter for any unported opcode. (The
+  differential-fuzzed against the interpreter for 2.8B+ instructions with zero
+  divergence (`nes_core/SECURITY.md`), and falling back to the interpreter for any unported opcode. (The
   full public blargg CPU/PPU/APU test-ROM gauntlet is **not yet run** end-to-end;
   see *Accuracy status* below.)
 - Broad compatibility: as of the 2026-09-02 census, **793 of 796 ROMs
@@ -768,8 +780,10 @@ pre-trained checkpoints (they are gitignored; you train them with the flow
 above).
 
 - **Super Mario Bros.: LEARNED, honest cold-start numbers.** Under the
-  only headline protocol (cold power-on, zero test-time state loads,
-  sticky-actions 0.25 + start-jitter, single-life, greedy), **1-1 is
+  only headline protocol (cold power-on for 1-1, whose entrance state is
+  power-on equivalent; a declared entrance state for every other level;
+  zero mid-episode state loads; sticky-actions 0.25 + start-jitter,
+  single-life, greedy), **1-1 is
   genuinely learned: 0.65 pooled clear rate** (0.56 / 0.74 per seed at 50
   episodes each; 0.667 sampled at 30, declared below the floor) by
   from-scratch PPO on tile observations, the project's first true clear at
@@ -809,8 +823,11 @@ above).
   always labeled, never presented as learning.
 - **Other games: EXHIBITION, in flight, counted honestly.** The same
   unmodified solver drives every campaign; only the profile changes.
-  **Bubble Bobble** is chained and banked through **round 60**
-  (`runs/bubble_bobble/chain_day2c/chain.jsonl`). **Castlevania** stands at
+  **Bubble Bobble** is chained and banked through **round 98**
+  contiguously, with round 99 split and 99-0 solved, 99-1 (the boss room)
+  open (`docs/receipts/bubble_bobble_chain_census_2026-09-02.md`, from
+  `runs/bubble_bobble/chain_day2f/chain.jsonl` and
+  `runs/bubble_bobble/chain_day2g/chain.jsonl`). **Castlevania** stands at
   **blocks 0-2 of ~18**, the block-3 hall is a genuine open wall, not a
   formality, and the honest statement is the block count, not a percentage.
   **Contra** has ten campaigns with empty `solutions/` directories
@@ -839,7 +856,7 @@ above).
 The emulator itself is the mature layer: byte-exact CPU (nestest, registers +
 CYC), the 149-test parity gate green, a 33-ROM Mesen-oracle lockstep, 793 of
 796 library ROMs (99.6%) booting into a live screen, and a differential fuzz of
-the ASM core against the pure-Rust reference with zero divergence over 240M+
+the ASM core against the pure-Rust reference with zero divergence over 2.8B+
 instructions. Recent
 fidelity fixes (MMC5/MMC1-SUROM/MMC3 banking, PPU forced-blank backdrop +
 color-emphasis, OAM-DMA bus routing) were validated against Mesen as the
@@ -867,7 +884,7 @@ not a shipped result.
 | Metroid | ✅ Mother Brain + escape | ✅ | reachable RAM |
 | Zelda | ✅ Ganon / ending song | ✅ | reachable RAM |
 | Mega Man (2) | ✅ shaping (no all-Masters flag) | ✅ | n/a (no game-win flag) |
-| Bubble Bobble | ✅ round-clear | ✅ | round-clear observed live (solver chained to round 60) |
+| Bubble Bobble | ✅ round-clear | ✅ | round-clear observed live (solver chained to round 98; 99-0 solved, 99-1 open) |
 | Tetris | ✅ line-goal | ⚠ capture | cross-sourced |
 | Gradius / Excitebike / Ghosts'n Goblins / DuckTales / Kid Icarus | ✅ stage/track/level clear | ✅ | live-validated addrs |
 | Double Dragon | ✅ mission-clear | ✅ | cross-sourced |
@@ -1154,8 +1171,8 @@ Correctness here is a gate, not a vibe. Everything runs locally; nothing
 depends on a hosted runner.
 
 ```bash
-make test        # ~1,730 pytest tests (tests/, 120s timeout) — no ROM needed
-make test-fast   # the same minus 31 slow tests — the inner loop
+make test        # ~6,410 pytest tests (tests/, 120s timeout) — no ROM needed
+make test-fast   # the same minus 43 slow-marked tests — the inner loop
 make selftest    # GUI widget construction, headless (offscreen Qt)
 make parity      # 149 nes_core-vs-nes-py/Mesen differential tests (< 2 min)
 make pool-test   # Rust pool/spectator tests behind --features python
@@ -1175,11 +1192,11 @@ What the numbers are, as of this writing:
 
 | Gate | Size | What it catches |
 |---|---|---|
-| `make test` | ~1,730 pytest tests (1,700 in the fast lane) | Trainer, solver, eval-harness, reward, GUI-adjacent logic |
+| `make test` | 6,412 pytest tests, 6,369 in the fast lane (`pytest --collect-only`, 2026-09-03) | Trainer, solver, eval-harness, reward, GUI-adjacent logic |
 | `make parity` | 149 tests: 17 recorded tapes × 2 checks (golden diff + determinism), a **33-ROM Mesen-oracle lockstep**, an 18-case byte-exact ROM fleet, plus the harness's own units | Palette, scroll, sprite, timing and mapper regressions against a ground-truth oracle |
 | nestest | **8,991 instructions byte-exact**: PC, opcode, A/X/Y/P/SP **and CYC** vs the Nintendulator golden trace | The CPU spec itself; every official and undocumented opcode |
-| Rust crate | 329 in-crate `#[test]` functions + 60 integration tests | Mappers, PPU/APU state machines, save-state round-trips, pool behavior |
-| ASM differential fuzz | 240M+ randomized instructions, **0 divergences** in A/X/Y/SP/P/PC or the 2 KB RAM FNV-1a hash | The AArch64 performance path drifting from the pure-Rust reference |
+| Rust crate | 778 in-crate `#[test]` functions (`--features asm_cpu`; 670 with default features) + 82 integration tests | Mappers, PPU/APU state machines, save-state round-trips, pool behavior |
+| ASM differential fuzz | 2.8B+ randomized instructions (`nes_core/SECURITY.md`), **0 divergences** in A/X/Y/SP/P/PC or the 2 KB RAM FNV-1a hash | The AArch64 performance path drifting from the pure-Rust reference |
 | `make provenance-check` | allowlist + quarantine + profile scan | Tier-3-contaminated artifacts leaking into a Learned-ledger run |
 
 Five validation layers, each catching a different class of bug, see
@@ -1205,7 +1222,7 @@ What this release **does** ship:
   screen), byte-exact CPU validation via nestest (8,991 instructions,
   registers + cycle count) and a 33-ROM Mesen-oracle lockstep, plus an
   AArch64 ASM 6502 core (differential-fuzzed against the pure-Rust
-  interpreter for 240M+ instructions, zero divergence).
+  interpreter for 2.8B+ instructions, zero divergence).
 - The training stack: rayon worker pool, vanilla-PPO trainer (default) with
   save-state and backward curricula, tile and pixel-CNN encoders, RND
   exploration, a DreamerV3 scaffold, and Core ML export.
@@ -1239,8 +1256,8 @@ What this release **does not** ship:
   public **blargg CPU/PPU/APU test-ROM suite** has not yet been run end-to-end
   as a gate (see *Accuracy status*).
 - **A second game beaten.** SMB is the one completed game. Bubble Bobble is
-  chained to round 60 and Castlevania to blocks 0-2 of ~18, both in flight,
-  both EXHIBITION, neither finished.
+  chained to round 98 with the round-99 boss open, and Castlevania to
+  blocks 0-2 of ~18, both in flight, both EXHIBITION, neither finished.
 - **Unattended "point it at any game" operation.** Generic clear detection is
   not yet trustworthy enough to leave running (the confluence detector's
   combat-blip and room-transition failure modes are open), so campaigns are
@@ -1266,9 +1283,10 @@ and falsifiers name their instruments. The headline items:
   (SMB1, Castlevania, Contra, Mega Man, Punch-Out, Tetris-B, Metroid, Zelda),
   and scores progress as **2 of 8 certified** today: linear momentum
   platforming and coverage/maze, both by receipted show-mode clears.
-- **Finish the second and third campaigns:** Bubble Bobble from round 60, and
-  the Castlevania hall (the class-4 orthogonal-progress wall) under one
-  pre-registered arm with its prior and stopping rule stated up front.
+- **Finish the second and third campaigns:** Bubble Bobble from the round-99
+  boss (99-1), and the Castlevania hall (the class-4 orthogonal-progress
+  wall) under one pre-registered arm with its prior and stopping rule stated
+  up front.
 - **Make unsticking self-arming.** Today one arm fires from telemetry and the
   rest are human-set flags; the T1 productization (stall watchdog → diagnosis
   bundle → agent) is the differentiating piece and is scheduled, not shipped.

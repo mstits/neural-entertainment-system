@@ -1,0 +1,42 @@
+[CPU] Uninitialized memory read: $0201
+[CPU] Uninitialized memory read: $0202
+[CPU] Uninitialized memory read: $0203
+[CPU] Uninitialized memory read: $0205
+[CPU] Uninitialized memory read: $0206
+[CPU] Uninitialized memory read: $0207
+[CPU] Uninitialized memory read: $0209
+[CPU] Uninitialized memory read: $020A
+[CPU] Uninitialized memory read: $020B
+[CPU] Uninitialized memory read: $020D
+[CPU] Uninitialized memory read: $020E
+[CPU] Uninitialized memory read: $020F
+[CPU] Uninitialized memory read: $0211
+[CPU] Uninitialized memory read: $0212
+[CPU] Uninitialized memory read: $0213
+[CPU] Uninitialized memory read: $0215
+[CPU] Uninitialized memory read: $0216
+[CPU] Uninitialized memory read: $0217
+[CPU] Uninitialized memory read: $0219
+[CPU] Uninitialized memory read: $021A
+[CPU] Uninitialized memory read: $021B
+[CPU] Uninitialized memory read: $021D
+[CPU] Uninitialized memory read: $021E
+[CPU] Uninitialized memory read: $021F
+[CPU] Uninitialized memory read: $0221
+[CPU] Uninitialized memory read: $0222
+[CPU] Uninitialized memory read: $0223
+[CPU] Uninitialized memory read: $0225
+[CPU] Uninitialized memory read: $0226
+[CPU] Uninitialized memory read: $0227
+[CPU] Uninitialized memory read: $0229
+[CPU] Uninitialized memory read: $022A
+[CPU] Uninitialized memory read: $022B
+[CPU] Uninitialized memory read: $022D
+[CPU] Uninitialized memory read: $022E
+[CPU] Uninitialized memory read: $022F
+[CPU] Uninitialized memory read: $00F5
+[CPU] Uninitialized memory read: $00F6
+[CPU] Uninitialized memory read: $00F8
+real 20.53
+user 20.37
+sys 0.09

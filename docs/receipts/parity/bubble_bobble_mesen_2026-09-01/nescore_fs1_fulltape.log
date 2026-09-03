@@ -1,0 +1,27 @@
+nes_core fs=1 x4 full tape (no flags, env.reset lineage): final lives=1 round=2
+   raw_frame=  257 lives 0->3
+   raw_frame= 3963 lives 3->2
+   raw_frame= 5070 lives 2->1
+   raw_frame=  664 round 0->1
+   raw_frame= 3451 round 1->0
+   raw_frame= 3452 round 0->1
+   raw_frame= 3454 round 1->2
+
+(a) vs fs=4 native reference rows (solver lineage), row = ours[F-1]:
+  materialize n=   1 exact=  0 median=   33 max=  33 lives_match=1/1 round_match=1/1
+  round1      n= 323 exact=  0 median=  132 max= 295 lives_match=323/323 round_match=322/323
+  seam1       n=   9 exact=  0 median=  307 max= 313 lives_match=9/9 round_match=0/9
+  round2      n= 510 exact=  0 median=  278 max= 796 lives_match=204/510 round_match=432/510
+  seam2       n=   9 exact=  0 median=  806 max= 811 lives_match=0/9 round_match=0/9
+  round3      n= 435 exact=  0 median=  721 max= 824 lives_match=0/435 round_match=0/435
+  first differing row: raw_frame=1816 label=materialize n=33 addrs=['0x1f', '0x23', '0x27', '0x28', '0x2d', '0x35', '0x62', '0x63', '0x6b', '0x77', '0x83', '0xda', '0xdd', '0xe4', '0x14b', '0x167', '0x168', '0x16a', '0x16b', '0x16c', '0x16d', '0x16e', '0x1fd', '0x1fe', '0x210', '0x213', '0x214', '0x217', '0x412', '0x41e']
+     fs4 vals=[22, 3, 6, 1, 4, 64, 142, 165, 22, 36, 34, 3, 5, 3, 8, 50, 241, 141, 213, 48, 49, 202, 35, 12, 105, 39, 105, 47, 17, 40]
+     fs1 vals=[18, 4, 0, 2, 5, 59, 156, 87, 18, 32, 30, 7, 1, 7, 1, 48, 236, 25, 212, 45, 210, 220, 161, 15, 106, 35, 106, 43, 21, 44]
+
+(b) vs Mesen shift+2 per frame:
+  mesen_row=i+1: overall exact=1 median=29 max=80 | prefix median=17 | round1 median=24 max=55 | round2 median=33 | round3 median=32
+     lives agree on 6957/6960 frames, round on 6958/6960
+     gameplay fork at raw_frame=2025: ours(x,y,enem)=(45,165,3) mesen=(45,166,3) diff=37 addrs=['0x0', '0x12', '0x1c', '0x25', '0x28', '0x32', '0x35', '0x3d', '0x84', '0x85', '0x86', '0x87', '0xd0', '0xd1', '0xd3', '0xda', '0xdd', '0xe4', '0xff', '0x169', '0x16a', '0x16b', '0x16c', '0x16d', '0x16e', '0x1f8', '0x1fd', '0x1fe', '0x200', '0x204']
+  mesen_row=i+2: overall exact=358 median=32 max=350 | prefix median=13 | round1 median=33 max=105 | round2 median=38 | round3 median=35
+     lives agree on 6960/6960 frames, round on 6958/6960
+     gameplay fork at raw_frame=2025: ours(x,y,enem)=(45,165,3) mesen=(45,165,3) diff=56 addrs=['0x0', '0x1', '0x2', '0x3', '0x12', '0x1c', '0x1f', '0x21', '0x22', '0x23', '0x25', '0x26', '0x27', '0x28', '0x40', '0x62', '0x63', '0x84', '0x85', '0xff', '0x168', '0x169', '0x16a', '0x16b', '0x16c', '0x16d', '0x16e', '0x1ac', '0x1f8', '0x22b']

@@ -1,0 +1,34 @@
+=== shift=2  start: 2026-09-01 18:32:22 PDT
+tape len=6962 sha256=d849155cf52f4f86d30eb465dc74facd41d2d62bae628e23058a578a22fd1ac5
+exit=0 status: done 6962 frames
+real 20.57
+user 20.20
+sys 0.27
+bytes=14258176
+1be5097e9fdeb94ff2f92a9c332bfdc4beec77024330718d28d62a244c86e6d7  <SCRATCH>/mesen_bb_shift2.bin
+=== shift=1  start: 2026-09-01 18:32:43 PDT
+tape len=6961 sha256=4ffb35e893acabfa4ee906402e4c20ef8dc1bfebe4d61da5d4b904a67f752e4b
+exit=0 status: done 6961 frames
+real 20.11
+user 19.83
+sys 0.19
+bytes=14256128
+7feaca28d616eb5ff16c546e620eb8e70736f5d53a73a8324bb4aa36a6420c56  <SCRATCH>/mesen_bb_shift1.bin
+=== shift=3  start: 2026-09-01 18:33:04 PDT
+tape len=6963 sha256=7ff1f1ad935825b9454c1c9741e229e26f14c6161461872f232af160d8c1c05f
+exit=0 status: done 6963 frames
+real 19.32
+user 19.11
+sys 0.18
+bytes=14260224
+3e1dca72227212c9ca4a29d221ee388be0ac15a8f34d3fd6dbd454b14d8f620a  <SCRATCH>/mesen_bb_shift3.bin
+=== shift=-1  start: 2026-09-01 18:33:23 PDT
+tape len=6959 sha256=04d7668ead4897fcf30caeb7ad2e705973ea16910577592ade37c70f256a9a82
+exit=0 status: done 6959 frames
+real 20.07
+user 19.80
+sys 0.19
+bytes=14252032
+725530b173465841d62534aeffa6e12cbcd5623b71a3f3575df84ab21a51a706  <SCRATCH>/mesen_bb_shift-1.bin
+restored /tmp/cv_tape.bin: 56c2d54519d3b9ef4dfeb555963ebd6810b8d22da115d4907b40a67bf5abb26f  /tmp/cv_tape.bin
+=== end: 2026-09-01 18:33:43 PDT

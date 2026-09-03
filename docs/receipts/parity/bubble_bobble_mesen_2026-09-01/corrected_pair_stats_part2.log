@@ -1,0 +1,14 @@
+== +/-1-frame tolerant (min over mesen rows i+1..i+3), 6963 frames: exact=414 median=24 p90=34 max=135 last=2
+   prefix      median=  13 p90=  23 max=  80 exact=275
+   materialize median=  14 p90=  17 max=  18 exact=0
+   round1      median=  25 p90=  32 max=  55 exact=0
+   seam1       median=   2 p90=   2 max=   2 exact=5
+   round2      median=  27 p90=  34 max=  98 exact=48
+   seam2       median=   2 p90=   2 max=   2 exact=1
+   round3      median=  28 p90=  38 max= 135 exact=85
+   frame 2026: nes(x,y,enem,score)=(47,170,3,39393939390) mesen=(47,170,3,39393939390)
+   frame 2027: nes(x,y,enem,score)=(47,168,3,39393939390) mesen=(47,168,3,39393939390)
+   frame 2028: nes(x,y,enem,score)=(47,166,3,0000390) mesen=(47,166,3,39393939391)
+   frame 2029: nes(x,y,enem,score)=(47,165,3,39393939391) mesen=(47,165,3,39393939391)
+   frame 2030: nes(x,y,enem,score)=(47,164,3,39393939391) mesen=(47,164,3,39393939391)
+   max same-byte diff 385 at frame 6959; regions: zp=7 stack=4 oam=0 rest=374; lives/round/x/y agree there: True,True,True,True

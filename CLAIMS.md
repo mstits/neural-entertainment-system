@@ -4700,3 +4700,32 @@ replication of the banked imitation-elimination result). Neither
 The interference question at strength needs both arms RL-trained —
 expensive, operator's call, not registered. Cost of everything above:
 ~26 minutes of machine time.
+
+## BUBBLE BOBBLE MESEN CROSS-CHECK 2026-09-01: HELD
+
+The banked `chain_overnight` rounds 1-3 tape (1,268 actions, 5,072 gameplay
+frames, plus the 1,816-frame cold-boot prefix that reproduces
+`Bubble Bobble (USA)_start.state.bin` byte-exact) replayed on Mesen 2 from
+power-on clears rounds 1, 2 and 3 within one frame of nes_core's
+3112 / 5186 / 6961, lives 3 throughout: exactly on those frames under the
+same-emulated-frame-count alignment (Mesen row i+1) and one frame earlier
+under the same-tape-byte alignment (Mesen row i+2), the two alignments the
+receipt's stats script reports side by side. Lives agree on 6,964/6,964 frames
+under the second alignment and 6,963/6,964 under the first, and RAM differs by
+median 24 bytes per frame under a one-frame tolerance that spans both. A
+same-day report (`mesen-parity-second-game.md`) recorded NOT HELD with Mesen at
+GAME OVER by frame 4,032; that run fed the tape at input phase 0 and omitted
+the 4-frame materialize step of `tape_replay.py:249`, and is withdrawn. Its §3
+claim that `frame_skip=4` native stepping is not equivalent to 4x
+`frame_skip=1` is also withdrawn: they are byte-exact on all 1,287 rows once
+the materialize step is included.
+
+Receipts: `docs/receipts/parity/bubble_bobble_mesen_2026-09-01/` (30 files
+under manifest `SHA256SUMS.ruling`, plus the ruling itself as `RULING.md`).
+The per-frame table is `corrected_pair_stats.log` and
+`corrected_pair_stats_part2.log`; the nes_core-side clear frames and the
+byte-exact fs=1-vs-lineage check are `nescore_fs1_corrected.log`.
+
+This is the second input-driven Mesen receipt and the first on a bank-switched
+mapper. It does not license a byte-identical claim, and it says nothing about
+pixels: every comparison here is CPU RAM.

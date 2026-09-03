@@ -1,0 +1,21 @@
+nes_core fs=1 corrected tape: final lives=3 round=4
+   raw_frame=  257 lives 0->3
+   raw_frame=  664 round 0->1
+   raw_frame= 3109 round 1->0
+   raw_frame= 3110 round 0->1
+   raw_frame= 3112 round 1->2
+   raw_frame= 5183 round 2->1
+   raw_frame= 5184 round 1->2
+   raw_frame= 5186 round 2->3
+   raw_frame= 6958 round 3->2
+   raw_frame= 6959 round 2->3
+   raw_frame= 6961 round 3->4
+
+vs fs=4 native solver lineage, row = ours[label+4-1]:
+  materialize n=   1 exact=   1 median=   0 max=   0 lives_match=1/1 round_match=1/1
+  round1      n= 323 exact= 323 median=   0 max=   0 lives_match=323/323 round_match=323/323
+  seam1       n=   9 exact=   9 median=   0 max=   0 lives_match=9/9 round_match=9/9
+  round2      n= 510 exact= 510 median=   0 max=   0 lives_match=510/510 round_match=510/510
+  seam2       n=   9 exact=   9 median=   0 max=   0 lives_match=9/9 round_match=9/9
+  round3      n= 435 exact= 435 median=   0 max=   0 lives_match=435/435 round_match=435/435
+  BYTE-EXACT on all 1287 rows: fs=1 full-render == fs=4 skip-render lineage

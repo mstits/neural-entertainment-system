@@ -57,6 +57,35 @@ nes-py only supports NROM / CNROM / SxROM / UxROM (4 mappers). nes_core supports
 
 These are ROMs where nes_core IS the only reference. Can't diff against nes-py. Need separate validation (e.g. cross-reference against Mesen traces in a future session).
 
+## Mesen 2 cross-check under real input: Bubble Bobble
+
+The table above is nes_core against nes-py on 120 cold-boot **idle** frames.
+This section is a different and stricter measurement: a banked action tape
+replayed on Mesen 2 from power-on, diffed against nes_core frame by frame,
+with the gameplay bytes (lives, round, position) read out by name.
+
+| ROM | Mapper | Frames | Gameplay-state parity | Receipts |
+|---|---|---:|---|---|
+| Bubble Bobble (USA) | 1 (MMC1) | 6,964 | HELD (rounds 1-3 clear on nes_core frames 3112 / 5186 / 6961 and Mesen matches them to within one frame; lives 6,964/6,964; RAM median 24 / p90 34 / max 135 bytes per frame under a one-frame tolerance) | `docs/receipts/parity/bubble_bobble_mesen_2026-09-01/` |
+
+Two tape-construction conventions have to hold or the comparison measures the
+harness instead of the core, and both were got wrong once before they were
+written down here: the tape is fed to Mesen at input phase +2 (the lineage's
+`env.reset()` advance plus the `inputPolled` phase), and a 4-frame NOOP
+materialize block sits between the root state and the first action
+(`src/training/tape_replay.py:249`). Any tape built for an external emulator
+is replayed on nes_core at `frame_skip=1` from `env.reset()` and shown
+byte-exact against the solver lineage before it is fed to Mesen at all.
+
+"Within one frame" is exact, not a hedge. The receipt's stats script reports
+two alignments and neither is privileged: Mesen row i+2 has applied the same
+tape byte as nes_core row i, and Mesen row i+1 has run the same number of
+emulated frames since power-on. Round transitions land on 3112 / 5186 / 6961
+under the second and one frame earlier under the first; lives agree on
+6,964/6,964 frames under the first and 6,963/6,964 under the second. The
+percentiles above are the one-frame-tolerant minimum over both, so they do
+not depend on the choice.
+
 ## Action items for next session
 
 1. **Closing the structural CPU gap** (the NMI push timing covered in `project_lainess_reference_findings_2026-04-23.md`) should drop every "tight" ROM to byte-exact and shift the distribution left by a meaningful chunk. Estimate ~215 ROMs would move to byte-exact.
