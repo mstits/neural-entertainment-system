@@ -19,9 +19,20 @@ A wrong lives byte does not degrade death detection, it INVERTS it
 these would have fired "death" on ordinary play — two of them measurably
 collapsed a search (1096 -> 24 cells, 774 -> 2 cells) when trial-wired.
 
+Driving the gate against those real traces a second time
+(reports/.../2026-09-01-lives-gate-validation.md) found two more, and
+neither was reachable by the three checks above:
+
+  * Kid Icarus $0129: reads 0 at the root, never moves, and outranks
+    every nonzero-root neighbour on the ranker's primary sort key. No
+    check could fire on a byte that never changes.
+  * Paperboy $00B2 / Galaga $0464: free-run on ~117- and ~428-step
+    cadences, invisible in a 320-step arm; Paperboy produced zero
+    evidence across all eight logs the gate had.
+
 These tests drive the gate on SYNTHETIC traces only — no ROM, no Pool,
 no emulation — matching the discipline `tests/test_discover_observables.py`
-and `tests/test_fight_gate.py` already use. Each of the three measured
+and `tests/test_fight_gate.py` already use. Each of the five measured
 failure modes gets a test, a clean stock that MUST pass gets one, and so
 does every veto that keeps a real death from being read as liveness.
 
@@ -38,6 +49,10 @@ from scripts.discover_observables import (
     ALIVE_MAX_STALL,
     ALIVE_MIN_PX,
     ALIVE_WITNESS_STEPS,
+    BEHAVIOUR_IDLE_LONG_N,
+    BEHAVIOUR_LONG_ARM,
+    IDLE_FREERUN_MAX_EVENTS,
+    IDLE_FREERUN_MIN_STEPS,
     MOVEMENT_ONSET_STEPS,
     OSC_MAX_CYCLES,
     OSC_RECOVER_STEPS,
@@ -55,6 +70,7 @@ RAM = 64                 # narrow synthetic RAM; the gate only indexes columns
 LIVES = 0x0A             # the byte under test
 OTHER = 0x0B             # a second nomination, for the ranking tests
 N = 320                  # BEHAVIOUR_N, the arm length the tool drives
+LONG_N = BEHAVIOUR_IDLE_LONG_N   # the fourth arm, pad untouched
 
 
 # ---------------------------------------------------------------------------
@@ -142,8 +158,41 @@ def _clean_stock_probe() -> dict:
     )
 
 
-def _verdict(probe: dict, addr: int = LIVES, deaths=()) -> dict:
-    return behavioural_lives_verdict({"addr": addr}, probe, death_logs=deaths)
+def _verdict(probe: dict, addr: int = LIVES, deaths=(), **cand) -> dict:
+    return behavioural_lives_verdict({"addr": addr, **cand}, probe,
+                                     death_logs=deaths)
+
+
+# ---------------------------------------------------------------------------
+# The long idle arm (BEHAVIOUR_IDLE_LONG_N), and the two shapes it exists
+# to see. Both were PASSED by the gate at 320 steps on real freshly-driven
+# data (2026-09-01 lives-gate validation, Gap 3).
+# ---------------------------------------------------------------------------
+def _cadence(n: int = LONG_N, *, period: int, start: int = 3) -> np.ndarray:
+    """A byte that moves on its own every `period` steps and never stops:
+    Paperboy $00B2 at ~117, Galaga $0464 at ~428."""
+    t = np.arange(n)
+    return ((start + t // period) % 256).astype(np.uint8)
+
+
+def _long_idle(col=None, *, n: int = LONG_N, churn_at=None,
+               thr: float = 350.0) -> dict:
+    """The `idle_long` arm: pad untouched, no odometer (the free-run check
+    reads one RAM column), optionally cut short by a mass RAM rewrite."""
+    log = np.zeros((n, RAM), dtype=np.uint8)
+    log[:, LIVES] = _col(n) if col is None else col
+    if churn_at is not None:
+        log[churn_at, :] = np.arange(RAM, dtype=np.uint8) + 1
+    return {"log": log, "steps": n, "odo": None, "scene": None,
+            "reset_threshold": thr}
+
+
+def _probe_with_long(long_arm: dict, base: dict = None) -> dict:
+    probe = base or _clean_stock_probe()
+    probe = {"arms": dict(probe["arms"]), "odometer": True,
+             "steps": N, "long_steps": len(long_arm["log"])}
+    probe["arms"][BEHAVIOUR_LONG_ARM] = long_arm
+    return probe
 
 
 # ---------------------------------------------------------------------------
@@ -409,6 +458,169 @@ def test_no_idle_control_arm_abstains_rather_than_convicting():
 
 
 # ---------------------------------------------------------------------------
+# FAILURE MODE 4: the byte reads 0 at the root (Kid Icarus $0129).
+#
+# The 2026-09-01 validation drove all eleven fanout profiles through this
+# gate on fresh real-ROM data and found three disagreements. Kid Icarus is
+# Gap 1: an idle-quiet, zero-root byte that outranks all four of its
+# nonzero-root neighbours on `moves_while_idle`, the ranker's PRIMARY sort
+# key, and that none of the first three checks can touch.
+# ---------------------------------------------------------------------------
+def _kid_icarus_shape(n: int = N) -> np.ndarray:
+    """Zero at the root, one uncorrelated 0 -> 255 wrap, nothing else."""
+    col = np.zeros(n, dtype=np.uint8)
+    col[200:] = 255
+    return col
+
+
+def test_a_zero_root_byte_is_rejected_though_no_other_check_can_fire():
+    probe = _probe(
+        hold=_arm({LIVES: _kid_icarus_shape()}, odo=_climb()),
+        idle=_arm({LIVES: _kid_icarus_shape()}, odo=_flat()),
+        mash=_arm({LIVES: _kid_icarus_shape()}, odo=_climb(px=2)),
+    )
+    v = _verdict(probe)
+    assert v["verdict"] == "REJECT"
+    assert v["failed"] == ["nonzero_root"]
+    # The point of the case: every other check acquits it.
+    assert v["checks"]["oscillation"]["verdict"] == "pass"
+    assert v["checks"]["empties_while_alive"]["verdict"] == "inconclusive"
+    assert v["checks"]["fires_on_movement"]["verdict"] == "pass"
+    assert v["checks"]["nonzero_root"]["measured_root"] == 0
+    assert "begins empty" in v["reason"]
+
+
+def test_the_root_is_read_off_the_arms_not_off_the_candidate_field():
+    """The re-check has to be INDEPENDENT of the ranker to be worth
+    anything: `starts_nonzero` is the ranker's own derived field, and the
+    hole this closes is that the ranker only DEMOTES on it. A candidate
+    arriving with a nonzero `start` it did not earn must still be
+    convicted by what the arms actually show."""
+    probe = _probe(hold=_arm({LIVES: _kid_icarus_shape()}, odo=_climb()),
+                   idle=_arm({LIVES: _kid_icarus_shape()}, odo=_flat()))
+    ch = _verdict(probe, start=3)["checks"]["nonzero_root"]
+    assert ch["verdict"] == "reject"
+    assert ch["measured_root"] == 0
+    # ...and the static claim is kept beside it, for the receipt only.
+    assert ch["static_start"] == 3
+
+
+def test_a_real_stock_keeps_its_root():
+    ch = _verdict(_clean_stock_probe(), start=2)["checks"]["nonzero_root"]
+    assert ch["verdict"] == "pass"
+    assert ch["measured_root"] == 2
+    assert set(ch["per_arm"]) == {"hold", "idle", "mash"}
+
+
+def test_a_byte_outside_every_arm_leaves_the_root_unread_not_rejected():
+    """No reading is not a reading of zero. The gate rejects on positive
+    evidence only, here as everywhere else."""
+    v = _verdict(_clean_stock_probe(), addr=RAM + 5)
+    assert v["checks"]["nonzero_root"]["verdict"] == "unavailable"
+    assert "unread" in v["checks"]["nonzero_root"]["note"]
+
+
+# ---------------------------------------------------------------------------
+# FAILURE MODE 5: the byte free-runs with the pad never touched
+# (Paperboy $00B2, Galaga $0464). Gap 3 of the same validation: both came
+# back PASS on every check, Paperboy with zero evidence across all eight
+# logs the gate then had, because their cadences are longer than an arm.
+# ---------------------------------------------------------------------------
+def test_a_fast_free_runner_is_rejected_on_the_long_idle_arm():
+    """Paperboy's ~117-step cadence: about 51 changes in the long arm."""
+    probe = _probe_with_long(_long_idle(_cadence(period=117)))
+    v = _verdict(probe)
+    assert v["verdict"] == "REJECT"
+    assert v["failed"] == ["free_runs_while_idle"]
+    ch = v["checks"]["free_runs_while_idle"]
+    assert ch["events"] > IDLE_FREERUN_MAX_EVENTS
+    assert 110 <= ch["cadence_steps"] <= 125
+    assert "free-runs" in v["reason"]
+
+
+def test_a_sparse_free_runner_at_the_galaga_cadence_is_still_caught():
+    """14 changes in 6000 NOOP steps, ~428 apart: the measurement that
+    flipped a same-night 'behaviourally verified' verdict on $0464. It is
+    the sparse case that sets the long arm's length: a 3000-step arm
+    carries about seven of these, under the bar."""
+    probe = _probe_with_long(_long_idle(_cadence(period=428)))
+    v = _verdict(probe)
+    assert v["verdict"] == "REJECT"
+    ch = v["checks"]["free_runs_while_idle"]
+    assert ch["events"] == 14
+    assert ch["events"] > IDLE_FREERUN_MAX_EVENTS
+
+
+def test_the_short_arms_alone_cannot_see_a_free_runner():
+    """The regression this closes, stated as a test: the SAME byte, driven
+    only through the three short arms, clears every check the gate had
+    before the long arm existed."""
+    probe = _probe(
+        hold=_arm({LIVES: _cadence(N, period=117)}, odo=_climb()),
+        idle=_arm({LIVES: _cadence(N, period=117)}, odo=_flat()),
+        mash=_arm({LIVES: _cadence(N, period=117)}, odo=_climb(px=2)),
+    )
+    v = _verdict(probe)
+    assert v["verdict"] == "PASS"
+    assert v["checks"]["free_runs_while_idle"]["verdict"] == "unavailable"
+    assert "invisible" in v["checks"]["free_runs_while_idle"]["note"]
+
+
+def test_a_stock_spent_while_idle_is_not_a_free_runner():
+    """A game that kills a standing player spends its lives once. The bar
+    is LIVES_MAX_TICKS down-ticks plus LIVES_MAX_REFILLS refills, CHOSEN
+    rather than inherited from the ranker, and a stock spent once stays
+    under it. A twice-continued one does not: IDLE_FREERUN_MAX_EVENTS."""
+    col = _spend(LONG_N, start=6, at=(400, 900, 1400, 1900, 2400, 2900))
+    col[3400:] = 6           # continue: one refill...
+    col[4400:] = 5           # ...and one more tick after it
+    probe = _probe_with_long(_long_idle(col))
+    ch = _verdict(probe)["checks"]["free_runs_while_idle"]
+    assert ch["events"] == IDLE_FREERUN_MAX_EVENTS
+    assert ch["verdict"] == "pass"
+
+
+def test_attract_mode_after_a_game_over_is_not_the_byte_free_running():
+    """Left alone long enough a game runs out of lives and returns to its
+    attract loop, where everything animates. The count stops at the first
+    mass RAM rewrite, the same threshold every other probe here truncates
+    on, so the demo reel is not read as the candidate ticking."""
+    col = np.zeros(LONG_N, dtype=np.uint8)
+    col[:] = 3
+    col[3000:] = _cadence(LONG_N - 3000, period=20)     # the demo reel
+    probe = _probe_with_long(_long_idle(col, churn_at=2999, thr=RAM / 2))
+    ch = _verdict(probe)["checks"]["free_runs_while_idle"]
+    assert ch["verdict"] == "pass"
+    assert ch["truncated_at"] == 2999
+    assert ch["watched_steps"] == 2998
+
+
+def test_too_little_idle_before_the_reload_abstains_rather_than_convicting():
+    probe = _probe_with_long(_long_idle(_cadence(period=20), churn_at=200,
+                                        thr=RAM / 2))
+    v = _verdict(probe)
+    ch = v["checks"]["free_runs_while_idle"]
+    assert ch["verdict"] == "inconclusive"
+    assert ch["watched_steps"] < IDLE_FREERUN_MIN_STEPS
+    assert v["passed"] is True
+
+
+def test_the_long_arm_is_kept_out_of_the_oscillation_evidence():
+    """`OSC_MAX_CYCLES` is a per-DRIVE rate calibrated on 320-700 step
+    drives. Folding a 6000-step drive into the same worst-of comparison
+    would convict a stock refilled at a continue for nothing but having
+    been watched ten times longer, so the long arm feeds the free-run
+    check and nothing else."""
+    toggling = _toggle(LONG_N, first=3, period=15)
+    probe = _probe_with_long(_long_idle(toggling))
+    v = _verdict(probe)
+    osc = v["checks"]["oscillation"]
+    assert osc["logs_watched"] == 3          # hold, idle, mash, not four
+    assert osc["verdict"] == "pass"
+    assert "oscillation" not in v["failed"]
+
+
+# ---------------------------------------------------------------------------
 # Screening: the tool must nominate the highest-ranked candidate that
 # PASSES, and must be honest when none do.
 # ---------------------------------------------------------------------------
@@ -440,7 +652,8 @@ def test_every_candidate_keeps_its_verdict_for_the_receipt():
     assert cands[0]["behaviour"]["reason"]
     assert cands[1]["behaviour"]["verdict"] == "PASS"
     assert set(cands[0]["behaviour"]["checks"]) == {
-        "oscillation", "empties_while_alive", "fires_on_movement"}
+        "nonzero_root", "oscillation", "empties_while_alive",
+        "fires_on_movement", "free_runs_while_idle"}
 
 
 def test_no_candidate_passing_is_reported_as_such_not_as_a_pick():

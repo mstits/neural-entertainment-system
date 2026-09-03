@@ -394,6 +394,19 @@ def test_the_probe_budget_stamps_the_behaviour_gate_drives(monkeypatch):
     assert budget["death_drives"] == 3 * 5
 
 
+def test_the_probe_budget_stamps_the_long_idle_arm_too(monkeypatch):
+    """The gate's FOURTH arm is the pad untouched for
+    `BEHAVIOUR_IDLE_LONG_N` steps, and at 6000 against 3 x 320 it is the
+    dominant term. Counting only the short arms would understate the
+    gate's emulator time by about six times, in the one place a reader
+    goes to find out what a draft cost."""
+    monkeypatch.setattr(og, "_discover",
+                        lambda: _stub_discovery(BEHAVIOUR_N=320,
+                                                BEHAVIOUR_IDLE_LONG_N=6000))
+    budget = og._try_probe_budget()
+    assert budget["behaviour_drives"] == 3 * 320 + 6000
+
+
 def test_a_pre_gate_discovery_module_still_yields_a_whole_budget(monkeypatch):
     """`_try_probe_budget` swallows every exception into `{}`, so reading
     a constant a not-yet-updated `discover_observables` lacks would not

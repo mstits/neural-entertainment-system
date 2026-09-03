@@ -396,7 +396,14 @@ def _try_probe_budget() -> dict[str, int]:
             "noop": int(d.NOOP_N), "advance": int(d.ADVANCE_N),
             "settle_scan": int(d.SETTLE_SCAN),
             "death_drives": int(d.DEATH_REPS) * int(d.DEATH_MAX_N),
-            "behaviour_drives": 3 * int(getattr(d, "BEHAVIOUR_N", 0))}
+            # Three short arms plus the long idle one. The long arm is the
+            # dominant term (6000 steps against 3 x 320), so a budget that
+            # counted only the short arms would understate the gate's
+            # emulator time by ~6x. Defaulted reads, for the same reason
+            # the BEHAVIOUR_N read is: a discovery module without the
+            # constant must yield a whole budget, not `{}`.
+            "behaviour_drives": (3 * int(getattr(d, "BEHAVIOUR_N", 0))
+                                 + int(getattr(d, "BEHAVIOUR_IDLE_LONG_N", 0)))}
 
 
 # --------------------------------------------------------------------------

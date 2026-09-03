@@ -177,6 +177,20 @@ adoption-check:
 	@.venv/bin/python scripts/check_adoption.py > /dev/null || \
 	  (.venv/bin/python scripts/check_adoption.py; exit 1)
 
+# Lineage guard for the four banked LEARNED rates: each run manifest's
+# own recorded profile pointer, that profile's checkpoint_scale, every
+# recorded phase config, and the run's metrics.jsonl, checked for the
+# dense x-ladder ever having paid. Standalone, NOT a `test:`
+# prerequisite: it reads runs/ and checkpoints/, both gitignored, so a
+# clean checkout would fail it for want of inputs rather than for a real
+# finding. The checkout-safe half of the same evidence (the four
+# committed profiles, plus the guard's detectors against tmp fixtures)
+# is tests/test_check_learned_lineage.py, which the suite does collect.
+.PHONY: lineage-check
+lineage-check:
+	@.venv/bin/python scripts/check_learned_lineage.py > /dev/null || \
+	  (.venv/bin/python scripts/check_learned_lineage.py; exit 1)
+
 # Coordination layer self-tests, not wired into `test:` as a prerequisite.
 .PHONY: worktree-census git-safe-selftest census-selftest
 worktree-census:

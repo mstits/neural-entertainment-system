@@ -66,3 +66,26 @@ These are ROMs where nes_core IS the only reference. Can't diff against nes-py. 
 3. **Add per-game replay tests** like `test_zelda_input_replay.py` for ROMs where gameplay-critical RAM bytes need to match. Start with the 23 byte_exact ROMs (easy wins) and extend.
 
 4. **Nothing to do for the 354 theirs_unsupported ROMs** until we have a non-nes-py reference.
+
+## Mesen 2 cross-checks under real input (banked tapes)
+
+Everything above is nes_core against nes-py on 120 **idle** cold-boot frames.
+This section is the other axis: a banked action tape replayed on Mesen 2 and
+on nes_core, compared frame by frame. Reproduce a row with
+`scripts/tracing/nes_core_ram_dump.py` (ROM, tape and input phase all on the
+command line) plus `scripts/tracing/mesen_cv_tape_dump.lua` and
+`scripts/tracing/diff_ram_tapes.py`.
+
+Before feeding any tape to Mesen, replay it through nes_core at
+`frame_skip=1` and show it byte-exact against its own solve lineage. A tape
+that cannot reproduce its own lineage says nothing about a second emulator;
+skipping that ten-second check produced a wrong divergence verdict on
+2026-09-01. `tests/test_nes_core_ram_dump.py` holds the check.
+
+| ROM | Tape | Gameplay-state parity | Receipt |
+|---|---|---|---|
+| Super Mario Bros. (World) | 12,000 frames of the banked flagship tape (9.6% of it) | HELD: lives, area, mode and every level-transition frame agree; RAM differs by median 17 / p90 27 / max 37 bytes per frame under a one-frame tolerance | `docs/receipts/parity/smb_mesen_2026-09-01/MANIFEST.md` |
+
+Everything not in this table is idle-only (33 ROMs,
+`tests/parity/test_mesen_lockstep.py`) or unchecked. CPU RAM only: no row
+here compares framebuffers.

@@ -172,6 +172,33 @@ FIGHT_MASH_WEIGHTS = np.array([0.25, 0.25, 0.10, 0.15, 0.15, 0.10])
 #: state" — the correct outcome for six of the fanout's eleven profiles,
 #: and strictly better than wiring a harmful one.
 BEHAVIOUR_N = 320        # steps per validation arm (hold / idle / mash)
+#: A FOURTH arm, the pad never touched, an order of magnitude longer than
+#: the other three. Its only job is the failure mode a short arm cannot
+#: see: a byte that free-runs on a slow cadence. Measured 2026-09-01
+#: against the arms above (2026-09-01-lives-gate-validation.md, Gap 3):
+#:
+#:   Paperboy $00B2  ~117-step cadence, ZERO evidence across all eight
+#:                   real logs the gate had (three 320-step arms, five
+#:                   700-step death drives): the byte the fanout calls
+#:                   false came back PASS on every check.
+#:   Galaga   $0464  14 change events in 6000 NOOP steps, ~428 apart: a
+#:                   later same-night document
+#:                   (CLEAR_DETECTION_CAMPAIGN_2026-08-26.md, finding 9)
+#:                   flipped the fanout's "behaviourally verified" call
+#:                   on this byte with exactly this probe.
+#:
+#: 6000 is that flip's own step count, not a round number: at ~428 steps
+#: between events 3000 carries about seven, under the bar below, and the
+#: point is to see the sparse case and not only Paperboy's fast one.
+#: Driven WITHOUT the odometer, because the free-run check reads one RAM
+#: column and nothing else, and that read is what the arm would cost.
+BEHAVIOUR_IDLE_LONG_N = 6000
+#: The long arm's name in `behaviour_drives`' output, and the one arm the
+#: oscillation check must NOT see: `OSC_MAX_CYCLES` is a per-DRIVE rate
+#: calibrated on 320-700 step drives, so folding a 6000-step drive into
+#: the same worst-of comparison would convict a stock refilled at a
+#: continue for nothing but having been watched ten times longer.
+BEHAVIOUR_LONG_ARM = "idle_long"
 #: A drop that comes BACK this fast is a cycle, not a refill. A continue
 #: (or a 1-up) sits behind a game-over sequence or an item pickup and is
 #: nowhere near this tight; an animation counter recovers in a handful of
@@ -243,9 +270,11 @@ BEHAVIOUR_MASH_WEIGHTS = np.array(
     [0.14, 0.14, 0.08, 0.16, 0.16, 0.14, 0.10, 0.08])
 #: Short names for the three checks, for the report line and the emitted
 #: comment. Same labels in both, so a receipt and a profile read alike.
-BEHAVIOUR_CHECK_ABBR = {"oscillation": "osc",
+BEHAVIOUR_CHECK_ABBR = {"nonzero_root": "root",
+                        "oscillation": "osc",
                         "empties_while_alive": "alive",
-                        "fires_on_movement": "move"}
+                        "fires_on_movement": "move",
+                        "free_runs_while_idle": "freerun"}
 
 #: The lives/health scan reads all of system RAM. Persistent counters are
 #: routinely kept OUTSIDE the zero page (the zero page is scratch a game
@@ -563,13 +592,14 @@ class Discoverer:
             scene = int(self.pool.get_odometer_scene_per_worker()[0])
         return int(x), int(y), scene
 
-    def behaviour_drives(self, n: int = BEHAVIOUR_N) -> dict:
-        """The three contrast arms the behavioural gate adjudicates over.
+    def behaviour_drives(self, n: int = BEHAVIOUR_N,
+                         n_long: int = BEHAVIOUR_IDLE_LONG_N) -> dict:
+        """The four contrast arms the behavioural gate adjudicates over.
 
         A nominated lives byte is not trusted until it has been WATCHED,
-        and what distinguishes the three measured false positives from a
-        stock is not shape but circumstance — so each arm supplies a
-        different circumstance, and all three are short:
+        and what distinguishes the measured false positives from a stock
+        is not shape but circumstance, so each arm supplies a different
+        circumstance, and the first three are short:
 
           * `hold` — the forward direction held down, the plain
             liveness/onset condition. A byte that fires within a few
@@ -582,16 +612,28 @@ class Discoverer:
             combos. It provokes the animation counters a directional hold
             never touches (Bad Dudes $00CD, first toggle at step 3).
 
-        Every arm also logs the PPU scroll odometer, the ONE progress
-        witness independent of the RAM byte under test — the check that
-        caught Ninja Gaiden $0386 emptying while the camera climbed
-        94 -> 426 px. Rebased per arm, since the accumulator survives a
-        state restore.
+        ...and the fourth is long:
 
-        3 * BEHAVIOUR_N steps on one headless worker, cached like every
-        other probe. Measured cost of the whole gate on Contra:
-        `find_hp_lives` 23.5 s -> 27.6 s, +17%, and a smaller fraction of
-        a full `discover_all`.
+          * `idle_long`: the pad untouched for `BEHAVIOUR_IDLE_LONG_N`
+            steps. Length is the whole point: Paperboy $00B2 free-runs on
+            a ~117-step cadence and Galaga $0464 on a ~428-step one, and
+            neither shows a single event this gate could count inside a
+            320-step arm. It carries no odometer, because the only check
+            that reads it (`_check_free_runs_while_idle`) reads one RAM
+            column.
+
+        The first three arms also log the PPU scroll odometer, the ONE
+        progress witness independent of the RAM byte under test, the
+        check that caught Ninja Gaiden $0386 emptying while the camera
+        climbed 94 -> 426 px. Rebased per arm, since the accumulator
+        survives a state restore.
+
+        3 * BEHAVIOUR_N + BEHAVIOUR_IDLE_LONG_N steps on one headless
+        worker, cached like every other probe. Measured cost of the three
+        short arms on Contra: `find_hp_lives` 23.5 s -> 27.6 s, +17%. The
+        long arm is ~6x their step count against an odometer-free step,
+        so budget it as the dominant term of the gate and stamp it in
+        `probe_budget` rather than letting it hide.
         """
         if "behaviour" in self._cache:
             return self._cache["behaviour"]
@@ -624,8 +666,17 @@ class Discoverer:
                 "scene": scene if odo_on else None,
                 "reset_threshold": float(self.reset_threshold(log)),
             }
+        if n_long > 0:
+            self._reload()
+            long_log = np.empty((n_long, RAM_SIZE), dtype=np.uint8)
+            for t in range(n_long):
+                long_log[t] = self._step(NOOP)
+            arms[BEHAVIOUR_LONG_ARM] = {
+                "log": long_log, "steps": n_long, "odo": None, "scene": None,
+                "reset_threshold": float(self.reset_threshold(long_log)),
+            }
         self._cache["behaviour"] = {"arms": arms, "odometer": bool(odo_on),
-                                    "steps": n}
+                                    "steps": n, "long_steps": int(n_long)}
         return self._cache["behaviour"]
 
     def attack_mash(self, reps: int = FIGHT_REPS, n: int = ATTACK_N) -> list[dict]:
@@ -2001,6 +2052,60 @@ def _longest_stall(deltas: np.ndarray) -> int:
     return int(best)
 
 
+def _check_nonzero_root(addr: int, arms: Mapping, *,
+                        static_start: Optional[int] = None) -> dict:
+    """FAILURE MODE 4: the byte reads 0 in the state it is judged from.
+
+    Kid Icarus $0129 (2026-09-01 gate validation, Gap 1): idle-quiet,
+    root 0, one uncorrelated 0 -> 255 wrap, and it outranks all four of
+    its nonzero-root neighbours on `moves_while_idle`, which is the
+    ranker's PRIMARY sort key. None of the other checks here can fire on
+    it. It never oscillates because it never moves, it cannot drop on
+    movement onset for the same reason, and `_arrival_at_zero` needs a
+    transition FROM nonzero, which a byte already at zero can never
+    produce. So the gate passed it, and `find_hp_lives` would have wired
+    it as `solve.lives`.
+
+    Root>0 is enforced upstream only as a DEMOTION (`starts_nonzero` is a
+    secondary sort key in `lives_from_death_drives`, never a filter):
+    the right call for a ranking, the wrong one once a behavioural gate
+    downstream is trusted to be the final word. This re-checks it
+    INDEPENDENTLY: the root is read back off the driven arms, not taken
+    from the candidate's own `start` field, so a ranker that mis-derived
+    that field cannot launder a zero-root byte past here. The static
+    value is recorded beside the measured one for the receipt and is
+    never what the verdict turns on.
+
+    Every arm reloads the same start state, so the arms should agree; the
+    reading kept is the largest, i.e. the check only convicts when NO arm
+    saw a value in this byte at all.
+    """
+    roots: dict[str, int] = {}
+    for name, arm in dict(arms or {}).items():
+        log = arm.get("log") if hasattr(arm, "get") else None
+        if log is None:
+            continue
+        log = np.asarray(log)
+        if log.ndim != 2 or not len(log) or addr >= log.shape[1]:
+            continue
+        roots[str(name)] = int(log[0, addr])
+    if not roots:
+        return {"verdict": "unavailable",
+                "note": "no driven arm carries this byte, root unread"}
+    measured = max(roots.values())
+    return {
+        "verdict": "reject" if measured == 0 else "pass",
+        "measured_root": measured, "per_arm": roots,
+        "static_start": None if static_start is None else int(static_start),
+        "note": (f"reads 0 at the root of all {len(roots)} driven arms: a "
+                 f"stock that begins empty has spent nothing, and its first "
+                 f"change reads as a death in the opening frames of every "
+                 f"episode"
+                 if measured == 0 else
+                 f"root {measured} over {len(roots)} driven arm(s)"),
+    }
+
+
 def _check_oscillation(addr: int, logs: Sequence[np.ndarray]) -> dict:
     """FAILURE MODE 1 — the byte cycles down and back, over and over.
 
@@ -2154,24 +2259,133 @@ def _check_fires_on_movement(addr: int, hold: Optional[Mapping],
     }
 
 
+#: How many changes a byte may make with the pad NEVER TOUCHED before it
+#: stops reading as a stock. A CHOSEN bar, tighter than anything the
+#: static ranker imposes rather than inherited from it: `LIVES_MAX_TICKS`
+#: bounds down-ticks in the FIRST REGIME ONLY (`_regime_split` ends that
+#: regime at the first rise), `LIVES_MAX_REFILLS` bounds rises over the
+#: whole trace, and changes after that first rise are never counted there
+#: at all, so there is no whole-drive ceiling upstream to inherit.
+#: What the bar costs, measured: a 3-life stock spent, continued, and
+#: spent again inside one 6000-step idle arm makes 11 changes and is
+#: REJECTED here while the ranker still calls it a stock (3 first-regime
+#: down-ticks against 6, 2 refills against 2). The bar is set for the
+#: free-runner instead: the loosest stock the ranker permits across three
+#: regimes runs to about 20 changes, and any bar that admits 20 admits
+#: Galaga's 14 as well. The false rejection that buys is honest ("no
+#: valid lives byte"), never an inverted death signal, which is the trade
+#: this gate makes everywhere else too.
+#: Measured references, both from bytes this gate PASSED at 320 steps:
+#:
+#:   Paperboy $00B2  ~117-step cadence  -> ~51 changes in 6000 idle steps
+#:   Galaga   $0464  14 changes in 6000 NOOP steps (CLEAR_DETECTION_
+#:                   CAMPAIGN_2026-08-26.md, finding 9)
+#:   a real stock, pad untouched, in a game that does not kill a standing
+#:   player: 0
+#:
+#: Neither shape fits `_check_oscillation`. A free-runner DRIFTS; it does
+#: not fall and return to its pre-fall level inside OSC_RECOVER_STEPS, and
+#: at 320 steps neither one produces a single countable cycle anyway.
+IDLE_FREERUN_MAX_EVENTS = LIVES_MAX_TICKS + LIVES_MAX_REFILLS
+#: ...and the count above is only read over an arm at least this long.
+#: A short window can only UNDER-report against an absolute bar, which is
+#: the safe direction for a gate that exists to reject, but a scrap of a
+#: window is not evidence of anything and must not convict either. The
+#: window is short when the arm was truncated at a mass RAM rewrite: a
+#: game left alone long enough runs out of lives and returns to its
+#: attract mode, and attract-mode animation is not the candidate byte
+#: free-running.
+IDLE_FREERUN_MIN_STEPS = 1000
+
+
+def _check_free_runs_while_idle(addr: int, arm: Optional[Mapping]) -> dict:
+    """FAILURE MODE 5: the byte keeps changing with the pad never touched.
+
+    A stock is spent by playing. A byte that ticks on its own while
+    nothing is pressed is a clock, a timer, an animation phase or a
+    demo-mode counter, and the three short arms cannot see it when its
+    cadence is longer than they are: Paperboy $00B2 moves about every 117
+    steps and Galaga $0464 about every 428, and both came back PASS on
+    every check in the 2026-09-01 validation (Gap 3) with, in Paperboy's
+    case, zero evidence across all eight logs the gate then had.
+
+    The count is taken up to the first mass RAM rewrite, on the same
+    `reset_threshold` every other probe in this module truncates on, so an
+    attract-mode reload at the end of a long idle does not get counted as
+    the byte free-running. When too little of the arm survives that
+    truncation the check abstains rather than convicting on a scrap.
+
+    Reported but NOT disqualifying upstream: `lives_from_death_drives`
+    demotes on `moves_while_idle` instead of rejecting, because a game
+    that kills an idle player would otherwise disqualify its own counter.
+    The bar here is deliberately TIGHTER than the ranker's, which sets no
+    whole-drive ceiling at all: see `IDLE_FREERUN_MAX_EVENTS` for what
+    that costs and why it is still the right direction to err in.
+    """
+    if arm is None:
+        return {"verdict": "unavailable",
+                "note": f"no {BEHAVIOUR_LONG_ARM} arm, so a free-runner slower "
+                        f"than {BEHAVIOUR_N} steps is invisible to this probe"}
+    log = np.asarray(arm.get("log"))
+    if log.ndim != 2 or len(log) < 2 or addr >= log.shape[1]:
+        return {"verdict": "inconclusive",
+                "note": "byte not in the long idle arm"}
+    thr = float(arm.get("reset_threshold") or 350.0)
+    churn = (np.diff(log.astype(np.int16), axis=0) != 0).sum(1)
+    mass = np.nonzero(churn > thr)[0]
+    cut = int(mass[0]) + 1 if mass.size else None
+    col = log[:cut, addr] if cut is not None else log[:, addr]
+    watched = int(col.size) - 1
+    if watched < IDLE_FREERUN_MIN_STEPS:
+        return {"verdict": "inconclusive", "watched_steps": watched,
+                "truncated_at": cut,
+                "note": f"only {watched} idle steps before the first mass RAM "
+                        f"event, too short to read a cadence"}
+    d = _wrap_delta_col(col)
+    events = int(np.count_nonzero(d))
+    downs = int(np.count_nonzero(d < 0))
+    ups = int(np.count_nonzero(d > 0))
+    cadence = int(watched // events) if events else None
+    verdict = "reject" if events > IDLE_FREERUN_MAX_EVENTS else "pass"
+    return {
+        "verdict": verdict, "events": events, "downs": downs, "ups": ups,
+        "watched_steps": watched, "truncated_at": cut,
+        "cadence_steps": cadence, "tolerated": IDLE_FREERUN_MAX_EVENTS,
+        "note": (f"changes {events} times in {watched} steps with the pad "
+                 f"never touched (about one every {cadence}): it free-runs, "
+                 f"it is not spent"
+                 if verdict == "reject" else
+                 f"{events} change(s) over {watched} idle steps "
+                 f"(<= {IDLE_FREERUN_MAX_EVENTS})"),
+    }
+
+
 def behavioural_lives_verdict(cand: Mapping, probe: Mapping, *,
                               death_logs: Sequence[np.ndarray] = ()) -> dict:
     """PASS/REJECT for one nominated lives byte, with the reason.
 
     `probe` is `Discoverer.behaviour_drives()` output — `{"arms":
-    {"hold": ..., "idle": ..., "mash": ...}}` — and `death_logs` are the
-    drives that nominated the candidate, reused for free as extra
-    oscillation evidence.
+    {"hold": ..., "idle": ..., "mash": ..., "idle_long": ...}}`, and
+    `death_logs` are the drives that nominated the candidate, reused for
+    free as extra oscillation evidence.
+
+    The long idle arm is held OUT of that oscillation evidence on
+    purpose: `OSC_MAX_CYCLES` is a worst-of-drives rate calibrated on
+    320-700 step drives, and a 6000-step drive dropped into the same
+    comparison would convict a stock refilled at a continue for nothing
+    but having been watched ten times longer. It feeds
+    `_check_free_runs_while_idle` and nothing else.
 
     A check reports `unavailable` (no odometer binding, no arm) or
-    `inconclusive` (the byte never emptied here, the camera never moved)
-    rather than passing quietly, and neither blocks: the gate rejects
-    only on positive evidence of one of the three measured failure
-    modes.
+    `inconclusive` (the byte never emptied here, the camera never moved,
+    too little of the long arm survived truncation) rather than passing
+    quietly, and neither blocks: the gate rejects only on positive
+    evidence of one of the five measured failure modes.
     """
     addr = int(cand["addr"])
     arms = dict(probe.get("arms") or {})
-    logs = [np.asarray(a["log"]) for a in arms.values() if a.get("log") is not None]
+    logs = [np.asarray(a["log"]) for name, a in arms.items()
+            if name != BEHAVIOUR_LONG_ARM and a.get("log") is not None]
     logs += [np.asarray(l) for l in death_logs]
 
     alive_checks = {}
@@ -2186,10 +2400,14 @@ def behavioural_lives_verdict(cand: Mapping, probe: Mapping, *,
     alive["per_arm"] = {k: v["verdict"] for k, v in alive_checks.items()}
 
     checks = {
+        "nonzero_root": _check_nonzero_root(
+            addr, arms, static_start=cand.get("start")),
         "oscillation": _check_oscillation(addr, logs),
         "empties_while_alive": alive,
         "fires_on_movement": _check_fires_on_movement(
             addr, arms.get("hold"), arms.get("idle")),
+        "free_runs_while_idle": _check_free_runs_while_idle(
+            addr, arms.get(BEHAVIOUR_LONG_ARM)),
     }
     rejected = [k for k, v in checks.items() if v["verdict"] == "reject"]
     return {
@@ -3287,7 +3505,8 @@ def _selftest() -> int:
                          "noop": NOOP_N, "advance": ADVANCE_N,
                          "settle_scan": SETTLE_SCAN,
                          "death_drives": DEATH_REPS * DEATH_MAX_N,
-                         "behaviour_drives": 3 * BEHAVIOUR_N},
+                         "behaviour_drives": (3 * BEHAVIOUR_N
+                                              + BEHAVIOUR_IDLE_LONG_N)},
         "all_passed": ok_all,
         "cases": results,
     }
@@ -3324,12 +3543,14 @@ def main() -> int:
     ap.add_argument("--no-behaviour-gate", action="store_true",
                     help="Skip the post-nomination behavioural validation of "
                     "the lives byte (FALSE_DEATH_FANOUT_2026-08-26.md §6). "
-                    "ON by default — it costs 3 x %d steps on the one "
-                    "worker and it is the only thing that catches an "
-                    "oscillating attack counter, a byte that empties while "
-                    "the odometer keeps climbing, or one that fires on "
-                    "movement onset. Turn it off only to reproduce a "
-                    "pre-gate nomination." % BEHAVIOUR_N)
+                    "ON by default: it costs 3 x %d + %d steps on the one "
+                    "worker and it is the only thing that catches a byte "
+                    "that reads 0 at the root, an oscillating attack "
+                    "counter, a byte that empties while the odometer keeps "
+                    "climbing, one that fires on movement onset, or one "
+                    "that free-runs on a cadence longer than a short arm. "
+                    "Turn it off only to reproduce a pre-gate nomination."
+                    % (BEHAVIOUR_N, BEHAVIOUR_IDLE_LONG_N))
     ap.add_argument("--fight-gate", action="store_true",
                     help="Also run find_fight_health + find_round_gate "
                     "(FIGHTGATE_MECHANISM_2026-08-25.md §3) for camera-static "

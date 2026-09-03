@@ -1688,6 +1688,29 @@ now holds four levels: 1-1 43%, 1-2 38%, 1-3 21%, 1-4 51%.
 Receipts: runs/online_1_4/final_eval_seed{7,101}.json,
 runs/online_1_4_attempt1/campaign.jsonl, runs/online_1_4/campaign.jsonl.
 
+ADDENDUM RL-1 (2026-09-01, reward-lineage check): the four banked rates
+(1-1 43/100, 1-2 38/100 shared-stream and 31/100 canonical, 1-3 21/100,
+1-4 51/100) were each traced to the training profile their run manifest
+records (`runs/interference/manifest.json` →
+`configs/mario_1_1_backward.yaml`, `runs/consol2/manifest.json` →
+`configs/mario_1_2_consol2.yaml`, `runs/consol2_1_3*/manifest.json` →
+`configs/mario_1_3_online_v1.yaml`, `runs/online_1_4/manifest.json` →
+`configs/mario_1_4_online_v1.yaml`), and every one of them, with every
+recorded `phase_configs/*.yaml` in those runs, sets
+`checkpoint_scale: 0.0`; the three campaign runs' `metrics.jsonl`
+(1-2, 1-3, 1-4) contain no `reward_checkpoint` category in any row. For
+1-1 the profile chain is manifest-recorded and the reference-receipt run
+that same manifest names is likewise clean, but no manifest in this repo
+ties a training log to the 43/100 checkpoint itself, so that lineage
+rests on its recorded profile alone. On that evidence the dense x-ladder
+bonus paid in no banked LEARNED lineage; the 22 profiles that enable it
+are cited nowhere in this ledger and produced no number on this
+scoreboard. The scoreboard stands unannotated. Receipt for every
+sentence above: `scripts/check_learned_lineage.py`
+(`make lineage-check`), which re-derives all four chains from the
+manifests rather than from a config picked by name and labels the 1-1
+metrics row for what the manifest calls it.
+
 WORLD 1-3, AND THE TRANSFER CLAIM (2026-08-16/17, ledger §1-3): the
 same campaign machinery, retargeted by config alone
 (`--campaign-config`; the 1-2 defaults stay golden-pinned), was applied
